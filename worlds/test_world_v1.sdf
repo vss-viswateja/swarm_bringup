@@ -1,0 +1,390 @@
+<sdf version='1.9'>
+  <world name='industrial-warehouse'>
+    <gravity>0 0 -9.8</gravity>
+    <physics name='default_physics' default='true' type='ode'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+    <plugin 
+      filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin 
+      filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin 
+      filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin 
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin 
+      filename="gz-sim-contact-system"
+      name="gz::sim::systems::Contact">
+    </plugin>
+    <plugin filename="gz-sim-imu-system"
+        name="gz::sim::systems::Imu">
+    </plugin>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type='adiabatic'/>
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name='aws_robomaker_warehouse_GroundB_01_001'>
+      <include>
+        <uri>https://fuel.ignitionrobotics.org/1.0/OpenRobotics/models/aws_robomaker_warehouse_GroundB_01</uri>
+      </include>
+      <pose>0 0 -0.090092 0 -0 0</pose>
+      <static>true</static>
+      <self_collide>false</self_collide>
+    </model>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 26</uri>
+      <name>aruco_box_26</name>
+      <pose>4.05972 6.8967 0.849999 1.63281 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 27</uri>
+      <name>aruco_box_27</name>
+      <pose>4.04029 6.45764 0.85 0.742797 -1.57079 0.84311</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 28</uri>
+      <name>aruco_box_28</name>
+      <pose>4.05798 7.14136 0.849999 -0.000363 -1.57079 0.000343</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 29</uri>
+      <name>aruco_box_29</name>
+      <pose>4.02937 6.67174 0.849999 -2.92038 -1.57079 2.9113</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 30</uri>
+      <name>aruco_box_30</name>
+      <pose>4.24804 6.44982 0.85 1.07023 -1.57079 -1.07013</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 31</uri>
+      <name>aruco_box_31</name>
+      <pose>4.24423 6.66809 0.849999 3.13559 -1.57079 -3.12431</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 32</uri>
+      <name>aruco_box_32</name>
+      <pose>4.48678 6.88748 0.849999 3.14159 -1.57079 3.13857</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 33</uri>
+      <name>aruco_box_33</name>
+      <pose>4.48518 6.45876 0.849999 -2.21648 -1.57079 2.21649</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 34</uri>
+      <name>aruco_box_34</name>
+      <pose>4.48605 6.67761 0.849999 1.91075 -1.57079 -1.91969</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 35</uri>
+      <name>aruco_box_35</name>
+      <pose>5.00851 6.41079 0.849999 0.000103 -1.57079 -0.000103</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 36</uri>
+      <name>aruco_box_36</name>
+      <pose>4.48452 7.13658 0.849999 -3.11502 -1.57079 3.11502</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 37</uri>
+      <name>aruco_box_37</name>
+      <pose>5.01406 6.64703 0.849999 3.14159 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 38</uri>
+      <name>aruco_box_38</name>
+      <pose>4.27182 7.13842 0.849999 -3.13202 -1.57079 -3.14139</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 39</uri>
+      <name>aruco_box_39</name>
+      <pose>4.28588 6.89499 0.849999 -0.010379 -1.57079 0.016719</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 40</uri>
+      <name>aruco_box_40</name>
+      <pose>5.00793 6.87689 0.85 1.14897 -1.57079 -1.14897</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 41</uri>
+      <name>aruco_box_41</name>
+      <pose>5.00673 7.12354 0.849999 0.000233 -1.57079 -0.000243</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 42</uri>
+      <name>aruco_box_42</name>
+      <pose>5.22685 7.13152 0.849999 -2.14183 -1.57079 2.13473</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 43</uri>
+      <name>aruco_box_43</name>
+      <pose>5.47319 7.13196 0.85 0.213262 -1.57079 -0.166272</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 44</uri>
+      <name>aruco_box_44</name>
+      <pose>5.48991 6.45616 0.849999 -3e-06 -1.57079 -3e-06</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 45</uri>
+      <name>aruco_box_45</name>
+      <pose>5.2369 6.45825 0.849999 -1.67279 -1.57079 -1.486</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 46</uri>
+      <name>aruco_box_46</name>
+      <pose>5.23387 6.90541 0.85 -2.63886 -1.57079 -0.50273</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 47</uri>
+      <name>aruco_box_47</name>
+      <pose>5.48321 6.90241 0.849999 -3.14153 -1.57079 3.14154</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 48</uri>
+      <name>aruco_box_48</name>
+      <pose>5.47945 6.6725 0.849999 -1.636 -1.57079 1.64431</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 49</uri>
+      <name>aruco_box_49</name>
+      <pose>5.24568 6.6809 0.849999 -2.80506 -1.57079 2.80486</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/.ignition/fuel/fuel.gazebosim.org/openrobotics/models/rectable/2</uri>
+      <name>RecTable_1</name>
+      <pose>4.8 6.8 0 0 -0 0</pose>
+      <static>true</static>
+    </include>
+    <include>
+      <uri>file:///home/viswa/.ignition/fuel/fuel.gazebosim.org/openrobotics/models/rectable/2</uri>
+      <name>RecTable_2</name>
+      <pose>4.8 -6.8 0 0 -0 0</pose>
+      <static>true</static>
+    </include>
+    
+    <!-- Simple box stand for UR5 robot - placed on RecTable_1 -->
+    <model name='ur5_stand_1'>
+      <static>true</static>
+      <pose>4.8 6.8 0.751 0 0 0</pose>
+      <link name='stand_link_1'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1.0</mu>
+                <mu2>1.0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    
+    <!-- Simple box stand for UR5 robot - placed on RecTable_2 -->
+    <model name='ur5_stand_2'>
+      <static>true</static>
+      <pose>4.8 -6.8 0.751 0 0 0</pose>
+      <link name='stand_link_2'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1.0</mu>
+                <mu2>1.0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco_box 0</uri>
+      <name>aruco_box_0</name>
+      <pose>4.05972 -6.8967 0.849999 1.63281 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 1</uri>
+      <name>aruco_box_1</name>
+      <pose>4.04029 -6.45764 0.85 0.742797 -1.57079 0.84311</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 2</uri>
+      <name>aruco_box_2</name>
+      <pose>4.05798 -7.14136 0.849999 -0.000363 -1.57079 0.000343</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 3</uri>
+      <name>aruco_box_3</name>
+      <pose>4.02937 -6.67174 0.849999 -2.92038 -1.57079 2.9113</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 4</uri>
+      <name>aruco_box_4</name>
+      <pose>4.24804 -6.44982 0.85 1.07023 -1.57079 -1.07013</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 5</uri>
+      <name>aruco_box_5</name>
+      <pose>4.24423 -6.66809 0.849999 3.13559 -1.57079 -3.12431</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 6</uri>
+      <name>aruco_box_6</name>
+      <pose>4.48678 -6.88748 0.849999 3.14159 -1.57079 3.13857</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 7</uri>
+      <name>aruco_box_7</name>
+      <pose>4.48518 -6.45876 0.849999 -2.21648 -1.57079 2.21649</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 8</uri>
+      <name>aruco_box_8</name>
+      <pose>4.48605 -6.67761 0.849999 1.91075 -1.57079 -1.91969</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 9</uri>
+      <name>aruco_box_9</name>
+      <pose>5.00851 -6.45488 0.849999 0.000107 -1.57079 -0.000107</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 10</uri>
+      <name>aruco_box_10</name>
+      <pose>4.48452 -7.13658 0.849999 -3.11502 -1.57079 3.11502</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 11</uri>
+      <name>aruco_box_11</name>
+      <pose>5.01406 -6.68048 0.849999 3.14159 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 12</uri>
+      <name>aruco_box_12</name>
+      <pose>4.27182 -7.13842 0.849999 -3.13202 -1.57079 -3.14139</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 13</uri>
+      <name>aruco_box_13</name>
+      <pose>4.28588 -6.89499 0.849999 -0.010379 -1.57079 0.016719</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 14</uri>
+      <name>aruco_box_14</name>
+      <pose>5.00793 -6.91036 0.85 1.16019 -1.57079 -1.16019</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 15</uri>
+      <name>aruco_box_15</name>
+      <pose>5.00673 -7.12354 0.849999 0.000233 -1.57079 -0.000243</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 16</uri>
+      <name>aruco_box_16</name>
+      <pose>5.22685 -7.13152 0.849999 -2.14183 -1.57079 2.13473</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 17</uri>
+      <name>aruco_box_17</name>
+      <pose>5.47319 -7.13196 0.85 0.213262 -1.57079 -0.166272</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 18</uri>
+      <name>aruco_box_18</name>
+      <pose>5.48991 -6.45616 0.849999 -3e-06 -1.57079 -3e-06</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 19</uri>
+      <name>aruco_box_19</name>
+      <pose>5.2369 -6.45825 0.849999 -1.67279 -1.57079 -1.486</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 20</uri>
+      <name>aruco_box_20</name>
+      <pose>5.23387 -6.90541 0.85 -2.63886 -1.57079 -0.50273</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 21</uri>
+      <name>aruco_box_21</name>
+      <pose>5.48321 -6.90241 0.849999 -3.14153 -1.57079 3.14154</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 22</uri>
+      <name>aruco_box_22</name>
+      <pose>5.47945 -6.6725 0.849999 -1.636 -1.57079 1.64431</pose>
+    </include>
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/ViswaTejaBottu/models/aruco box 23</uri>
+      <name>aruco_box_23</name>
+      <pose>5.24568 -6.6809 0.849999 -2.80506 -1.57079 2.80486</pose>
+    </include>
+    <light name='Warehouse_CeilingLight_003' type='point'>
+      <pose>0 0 8.5 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>80</range>
+        <linear>0.01</linear>
+        <constant>0.29999999999999999</constant>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+  </world>
+</sdf>
