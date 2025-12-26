@@ -1,8 +1,9 @@
 import os
 from ament_index_python.packages import get_package_share_directory, get_package_prefix
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, TimerAction, IncludeLaunchDescription, SetEnvironmentVariable, RegisterEventHandler
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -31,12 +32,12 @@ def generate_launch_description():
     
     declare_world_file_cmd = DeclareLaunchArgument(
         'world_file',
-        default_value=os.path.join(pkg_share, 'worlds', 'test_world_v1.sdf'),
+        default_value=os.path.join(pkg_share, 'worlds', 'test_world_v2.sdf'),
         description='Path to the world file to load'
     )
 
     robot_desc_pkg_prefix = get_package_prefix('swarm_description')
-    resource_path = os.path.join(robot_desc_pkg_prefix, 'share')
+    resource_path = os.path.join(robot_desc_pkg_prefix, 'share') + ':' + '/home/viswa/Desktop/Gazebo_models'
     
     ign_resource_path = SetEnvironmentVariable(
         name='IGN_GAZEBO_RESOURCE_PATH',
@@ -53,7 +54,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource([os.path.join(
             get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')]),
         launch_arguments={
-            'gz_args': ['empty.sdf', ' -r -s'],
+            'gz_args': [world_file, ' -r -s'],
         }.items(),
     )
     
@@ -66,24 +67,68 @@ def generate_launch_description():
         }.items(),
     )
 
-    spawn_jackal_with_control = IncludeLaunchDescription(
+    spawn_agent1_with_control = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(
-            get_package_share_directory('swarm_description'), 'launch', 'jackal_control.launch.py')])
+            get_package_share_directory('swarm_description'), 'launch', 'jackal_control.launch.py')]),
+            launch_arguments={
+                'robot_namespace': 'robot1',
+            }.items(),
     )
 
-    spawn_ur5_with_control = IncludeLaunchDescription(
+    spawn_agent2_with_control = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(
-            get_package_share_directory('swarm_description'), 'launch', 'ur5_control.launch.py')])
+            get_package_share_directory('swarm_description'), 'launch', 'jackal_control.launch.py')]),
+            launch_arguments={
+                'robot_namespace': 'robot2',
+                'pose_y': '-2.0',
+            }.items(),  
     )
 
-    delayed_jackal_spawner = TimerAction(
-        period=10.0,
-        actions=[spawn_jackal_with_control]
+    spawn_agent1_nav = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([os.path.join(
+            get_package_share_directory('swarm_description'), 'launch', 'jackal_nav2.launch.py')]),
+        launch_arguments={
+            'robot_namespace': 'robot1',
+            'pose_x': '0.0',
+            'pose_y': '0.0',
+            'pose_z': '0.0',
+        }.items(),
+    )
+
+    spawn_agent2_nav = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([os.path.join(
+            get_package_share_directory('swarm_description'), 'launch', 'jackal_nav2.launch.py')]),
+        launch_arguments={
+            'robot_namespace': 'robot2',
+            'pose_x': '0.0',
+            'pose_y': '1.0',
+            'pose_z': '0.0',
+        }.items(),
+    )
+
+    # Staggered robot spawning to avoid race conditions
+    # Robot 1 spawns 15s after Gazebo starts (enough time for world to load)
+    delayed_agent1_spawner = TimerAction(
+        period=15.0,
+        actions=[spawn_agent1_with_control]
     )
     
-    delayed_ur5_spawner = TimerAction(
-        period=10.0,
-        actions=[spawn_ur5_with_control]
+    # Robot 2 spawns 10s after Robot 1 (25s total) to ensure no conflicts
+    delayed_agent2_spawner = TimerAction(
+        period=25.0,
+        actions=[spawn_agent2_with_control]
+    )
+
+    # Navigation starts after Control/EKF is ready (Control starts at 15s + ~12s init = ~27s)
+    delayed_agent1_nav = TimerAction(
+        period=30.0,
+        actions=[spawn_agent1_nav]
+    )
+
+    # Navigation starts after Control/EKF is ready (Control starts at 25s + ~12s init = ~37s)
+    delayed_agent2_nav = TimerAction(
+        period=40.0,
+        actions=[spawn_agent2_nav]
     )
 
     '''
@@ -107,7 +152,7 @@ def generate_launch_description():
         name='parameter_bridge',
         output='screen',
         parameters=[{
-            'config_file': os.path.join(pkg_share, 'config', 'swarm_bridge.yaml')
+            'config_file': os.path.join(pkg_share, 'config', 'mobile_swarm_bridge.yaml')
         }]
     )
     
@@ -121,10 +166,10 @@ def generate_launch_description():
         gz_resource_path,
         gazebo_server,
         gazebo_gui,
-        #delayed_jackal_spawner,
-        #delayed_ur5_spawner,
-        #rviz,
         bridge,
-
-        
+        # Staggered robot spawning - Robot1 at 15s, Robot2 at 25s
+        delayed_agent1_spawner,
+        delayed_agent2_spawner,
+        delayed_agent1_nav,
+        delayed_agent2_nav,
     ])
