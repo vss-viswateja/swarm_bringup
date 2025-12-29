@@ -4,6 +4,24 @@
   gz_type_name: 'gz.msgs.Clock'
   direction: GZ_TO_ROS
 
+- ros_topic_name: '/robot3/imu'
+  gz_topic_name: '/robot3/imu'
+  ros_type_name: 'sensor_msgs/msg/Imu'
+  gz_type_name: 'ignition.msgs.IMU'
+  direction: GZ_TO_ROS
+
+- ros_topic_name: '/robot3/scan'
+  gz_topic_name: '/robot3/lidar'
+  ros_type_name: 'sensor_msgs/msg/LaserScan'
+  gz_type_name: 'ignition.msgs.LaserScan'
+  direction: GZ_TO_ROS
+  
+- ros_topic_name: '/robot3/scan/points'
+  gz_topic_name: '/robot3/lidar/points'
+  ros_type_name: 'sensor_msgs/msg/PointCloud2'
+  gz_type_name: 'ignition.msgs.PointCloudPacked'
+  direction: GZ_TO_ROS
+
 - ros_topic_name: '/robot1/imu'
   gz_topic_name: '/robot1/imu'
   ros_type_name: 'sensor_msgs/msg/Imu'

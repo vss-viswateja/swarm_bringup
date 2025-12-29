@@ -67,83 +67,69 @@ def generate_launch_description():
         }.items(),
     )
 
-    spawn_agent1_with_control = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([os.path.join(
-            get_package_share_directory('swarm_description'), 'launch', 'jackal_control.launch.py')]),
-            launch_arguments={
-                'robot_namespace': 'robot1',
-            }.items(),
-    )
+    # Define robot configurations
+    robots = [
+        {'name': 'robot1', 'x': '0.0', 'y': '-3.0', 'z': '0.22', 'nav_x': '0.0', 'nav_y': '0.0', 'nav_z': '0.0', 'spawn_delay': 15.0, 'nav_delay': 30.0},
+        {'name': 'robot2', 'x': '0.0', 'y': '-2.0', 'z': '0.22', 'nav_x': '0.0', 'nav_y': '1.0', 'nav_z': '0.0', 'spawn_delay': 25.0, 'nav_delay': 40.0},
+        {'name': 'robot3', 'x': '0.0', 'y': '-1.0', 'z': '0.22', 'nav_x': '0.0', 'nav_y': '2.0', 'nav_z': '0.0','spawn_delay': 35.0, 'nav_delay': 50.0},
+        {'name': 'robot4', 'x': '-1.0', 'y': '-3.0', 'z': '0.22',  'nav_x': '-1.0', 'nav_y': '0.0', 'nav_z': '0.0', 'spawn_delay': 45.0, 'nav_delay': 60.0},
+        {'name': 'robot5', 'x': '-1.0', 'y': '-2.0', 'z': '0.22', 'nav_x': '-1.0', 'nav_y': '1.0', 'nav_z': '0.0', 'spawn_delay': 55.0, 'nav_delay': 70.0},
+    ]
 
-    spawn_agent2_with_control = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([os.path.join(
-            get_package_share_directory('swarm_description'), 'launch', 'jackal_control.launch.py')]),
-            launch_arguments={
-                'robot_namespace': 'robot2',
-                'pose_y': '-2.0',
-            }.items(),  
-    )
-
-    spawn_agent1_nav = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([os.path.join(
-            get_package_share_directory('swarm_description'), 'launch', 'jackal_nav2.launch.py')]),
-        launch_arguments={
-            'robot_namespace': 'robot1',
-            'pose_x': '0.0',
-            'pose_y': '0.0',
-            'pose_z': '0.0',
-        }.items(),
-    )
-
-    spawn_agent2_nav = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([os.path.join(
-            get_package_share_directory('swarm_description'), 'launch', 'jackal_nav2.launch.py')]),
-        launch_arguments={
-            'robot_namespace': 'robot2',
-            'pose_x': '0.0',
-            'pose_y': '1.0',
-            'pose_z': '0.0',
-        }.items(),
-    )
-
-    # Staggered robot spawning to avoid race conditions
-    # Robot 1 spawns 15s after Gazebo starts (enough time for world to load)
-    delayed_agent1_spawner = TimerAction(
-        period=15.0,
-        actions=[spawn_agent1_with_control]
-    )
     
-    # Robot 2 spawns 10s after Robot 1 (25s total) to ensure no conflicts
-    delayed_agent2_spawner = TimerAction(
-        period=25.0,
-        actions=[spawn_agent2_with_control]
-    )
+    robot_instances = []
+    
+    for robot in robots:
+        # Spawn robot with control
+        spawn_control = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([os.path.join(
+                get_package_share_directory('swarm_description'), 'launch', 'jackal_control.launch.py')]),
+            launch_arguments={
+                'robot_namespace': robot['name'],
+                'pose_x': robot['x'],
+                'pose_y': robot['y'],
+                'pose_z': robot['z'],
+            }.items(),
+        )
 
-    # Navigation starts after Control/EKF is ready (Control starts at 15s + ~12s init = ~27s)
-    delayed_agent1_nav = TimerAction(
-        period=30.0,
-        actions=[spawn_agent1_nav]
-    )
+        # Spawn navigation
+        spawn_nav = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([os.path.join(
+                get_package_share_directory('swarm_description'), 'launch', 'jackal_nav2.launch.py')]),
+            launch_arguments={
+                'robot_namespace': robot['name'],
+                'pose_x': robot['nav_x'],
+                'pose_y': robot['nav_y'],
+                'pose_z': robot['nav_z'],
+            }.items(),
+        )
 
-    # Navigation starts after Control/EKF is ready (Control starts at 25s + ~12s init = ~37s)
-    delayed_agent2_nav = TimerAction(
-        period=40.0,
-        actions=[spawn_agent2_nav]
-    )
+        # Delayed actions
+        delayed_spawn = TimerAction(
+            period=robot['spawn_delay'],
+            actions=[spawn_control]
+        )
 
-    '''
+        delayed_nav = TimerAction(
+            period=robot['nav_delay'],
+            actions=[spawn_nav]
+        )
+
+        robot_instances.append(delayed_spawn)
+        robot_instances.append(delayed_nav)
+
+    
     rviz = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         output='screen',
-        arguments=['-d', os.path.join(pkg_share, 'config', 'default_view.rviz')],
+        arguments=['-d', os.path.join(pkg_share, 'config', 'mobile_swarm.rviz')],
         parameters=[{
-            'use_sim_time': use_sim_time,
-            'robot_description': robot_description,
+            'use_sim_time': True,
         }],
     )
-    '''
+    
 
     #gz_bridge 
     bridge = Node(
@@ -159,7 +145,7 @@ def generate_launch_description():
 
 
     # Create and return launch description
-    return LaunchDescription([
+    ld = LaunchDescription([
         declare_use_sim_time_cmd,
         declare_world_file_cmd,
         ign_resource_path,
@@ -167,9 +153,10 @@ def generate_launch_description():
         gazebo_server,
         gazebo_gui,
         bridge,
-        # Staggered robot spawning - Robot1 at 15s, Robot2 at 25s
-        delayed_agent1_spawner,
-        delayed_agent2_spawner,
-        delayed_agent1_nav,
-        delayed_agent2_nav,
+        rviz,
     ])
+    
+    #for action in robot_instances:
+    #    ld.add_action(action)
+
+    return ld
