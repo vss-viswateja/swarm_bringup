@@ -124,7 +124,7 @@ def generate_launch_description():
         executable='rviz2',
         name='rviz2',
         output='screen',
-        arguments=['-d', os.path.join(pkg_share, 'config', 'mobile_swarm.rviz')],
+        arguments=['-d', os.path.join(pkg_share, 'config', 'swarm.rviz')],
         parameters=[{
             'use_sim_time': True,
         }],
