@@ -138,7 +138,7 @@ def generate_launch_description():
         name='parameter_bridge',
         output='screen',
         parameters=[{
-            'config_file': os.path.join(pkg_share, 'config', 'mobile_swarm_bridge.yaml')
+            'config_file': os.path.join(pkg_share, 'config', 'swarm_bridge.yaml')
         }]
     )
     
