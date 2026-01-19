@@ -32,6 +32,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'object_state_manager = swarm_bringup.object_state_manager:main',
         ],
     },
 )

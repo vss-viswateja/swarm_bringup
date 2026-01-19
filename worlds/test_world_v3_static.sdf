@@ -1,0 +1,475 @@
+<sdf version='1.9'>
+  <world name='construction_world_v3'>
+    <gravity>0 0 -9.8</gravity>
+    <physics name='default_physics' default='true' type='ode'>
+      <max_step_size>0.005</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>200</real_time_update_rate>
+    </physics>
+    <plugin name='gz::sim::systems::Physics' filename='gz-sim-physics-system'/>
+    <plugin name='gz::sim::systems::UserCommands' filename='gz-sim-user-commands-system'/>
+    <plugin name='gz::sim::systems::SceneBroadcaster' filename='gz-sim-scene-broadcaster-system'/>
+    <plugin name='gz::sim::systems::Sensors' filename='gz-sim-sensors-system'>
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin name='gz::sim::systems::Contact' filename='gz-sim-contact-system'/>
+    <plugin name='gz::sim::systems::Imu' filename='gz-sim-imu-system'/>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type='adiabatic'/>
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/construction_floor_v3</uri>
+      <name>construction_floor_v3</name>
+      <static>true</static>
+      <pose>0.001576 5.98911 -1.1346 -1.57 -0 3.14</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/construction_site_v3</uri>
+      <name>construction_site_v3</name>
+      <static>true</static>
+      <pose>0 0 0.189225 0 -0 0</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_26</uri>
+      <name>aruco_box_26</name>
+      <static>true</static>
+      <pose>-7.79826 3.13806 0.8594 1.63281 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_27</uri>
+      <name>aruco_box_27</name>
+      <static>true</static>
+      <pose>-7.81769 2.699 0.8594 0.742797 -1.57079 0.84311</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_28</uri>
+      <name>aruco_box_28</name>
+      <static>true</static>
+      <pose>-7.8 3.38272 0.8594 -0.000363 -1.57079 0.000343</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_29</uri>
+      <name>aruco_box_29</name>
+      <static>true</static>
+      <pose>-7.82861 2.9131 0.8594 -2.92038 -1.57079 2.9113</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_30</uri>
+      <name>aruco_box_30</name>
+      <static>true</static>
+      <pose>-7.60994 2.69118 0.8594 1.07023 -1.57079 -1.07013</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_31</uri>
+      <name>aruco_box_31</name>
+      <static>true</static>
+      <pose>-7.61375 2.90945 0.8594 3.13559 -1.57079 -3.12431</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_32</uri>
+      <name>aruco_box_32</name>
+      <static>true</static>
+      <pose>-7.3712 3.12884 0.8594 3.14159 -1.57079 3.13857</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_33</uri>
+      <name>aruco_box_33</name>
+      <static>true</static>
+      <pose>-7.3728 2.70012 0.8594 -2.21648 -1.57079 2.21649</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_34</uri>
+      <name>aruco_box_34</name>
+      <static>true</static>
+      <pose>-7.37193 2.91897 0.8594 1.91075 -1.57079 -1.91969</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_35</uri>
+      <name>aruco_box_35</name>
+      <static>true</static>
+      <pose>-6.84947 2.65215 0.8594 0.000103 -1.57079 -0.000103</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_36</uri>
+      <name>aruco_box_36</name>
+      <static>true</static>
+      <pose>-7.37346 3.37794 0.8594 -3.11502 -1.57079 3.11502</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_37</uri>
+      <name>aruco_box_37</name>
+      <static>true</static>
+      <pose>-6.84392 2.88839 0.8594 3.14159 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_38</uri>
+      <name>aruco_box_38</name>
+      <static>true</static>
+      <pose>-7.58616 3.37978 0.8594 -3.13202 -1.57079 -3.14139</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_39</uri>
+      <name>aruco_box_39</name>
+      <static>true</static>
+      <pose>-7.5721 3.13635 0.8594 -0.010379 -1.57079 0.016719</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_40</uri>
+      <name>aruco_box_40</name>
+      <static>true</static>
+      <pose>-6.85005 3.11825 0.8594 1.14897 -1.57079 -1.14897</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_41</uri>
+      <name>aruco_box_41</name>
+      <static>true</static>
+      <pose>-6.85125 3.3649 0.8594 0.000233 -1.57079 -0.000243</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_42</uri>
+      <name>aruco_box_42</name>
+      <static>true</static>
+      <pose>-6.63113 3.37288 0.8594 -2.14183 -1.57079 2.13473</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_43</uri>
+      <name>aruco_box_43</name>
+      <static>true</static>
+      <pose>-6.38479 3.37332 0.8594 0.213262 -1.57079 -0.166272</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_44</uri>
+      <name>aruco_box_44</name>
+      <static>true</static>
+      <pose>-6.36807 2.69752 0.8594 -3e-06 -1.57079 -3e-06</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_45</uri>
+      <name>aruco_box_45</name>
+      <static>true</static>
+      <pose>-6.62108 2.69961 0.8594 -1.67279 -1.57079 -1.486</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_46</uri>
+      <name>aruco_box_46</name>
+      <static>true</static>
+      <pose>-6.62411 3.14677 0.8594 -2.63886 -1.57079 -0.50273</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_47</uri>
+      <name>aruco_box_47</name>
+      <static>true</static>
+      <pose>-6.37477 3.14377 0.8594 -3.14153 -1.57079 3.14154</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_48</uri>
+      <name>aruco_box_48</name>
+      <static>true</static>
+      <pose>-6.37853 2.91386 0.8594 -1.636 -1.57079 1.64431</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_49</uri>
+      <name>aruco_box_49</name>
+      <static>true</static>
+      <pose>-6.6123 2.92226 0.8594 -2.80506 -1.57079 2.80486</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/.ignition/fuel/fuel.gazebosim.org/openrobotics/models/rectable/2</uri>
+      <name>RecTable_1</name>
+      <static>true</static>
+      <pose>-7 3 0.01 0 -0 0</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/.ignition/fuel/fuel.gazebosim.org/openrobotics/models/rectable/2</uri>
+      <name>RecTable_2</name>
+      <static>true</static>
+      <pose>-7 -3 0.01 0 -0 0</pose>
+    </include>
+    <model name='ur5_stand_1'>
+      <static>true</static>
+      <pose>-7.08554 3 0.7694 0 -0 0</pose>
+      <link name='stand_link_1'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ur5_stand_2'>
+      <static>true</static>
+      <pose>-7.09187 -3 0.7694 0 -0 0</pose>
+      <link name='stand_link_2'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.15 0.15 0.02</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+            <specular>0.3 0.3 0.3 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <self_collide>false</self_collide>
+    </model>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_0</uri>
+      <name>aruco_box_0</name>
+      <static>true</static>
+      <pose>-7.79826 -3.05534 0.8594 1.63281 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_1</uri>
+      <name>aruco_box_1</name>
+      <static>true</static>
+      <pose>-7.81769 -2.61628 0.8594 0.742797 -1.57079 0.84311</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_2</uri>
+      <name>aruco_box_2</name>
+      <static>true</static>
+      <pose>-7.8 -3.3 0.8594 -0.000363 -1.57079 0.000343</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_3</uri>
+      <name>aruco_box_3</name>
+      <static>true</static>
+      <pose>-7.82861 -2.83038 0.8594 -2.92038 -1.57079 2.9113</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_4</uri>
+      <name>aruco_box_4</name>
+      <static>true</static>
+      <pose>-7.60994 -2.60846 0.8594 1.07023 -1.57079 -1.07013</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_5</uri>
+      <name>aruco_box_5</name>
+      <static>true</static>
+      <pose>-7.61375 -2.82673 0.8594 3.13559 -1.57079 -3.12431</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_6</uri>
+      <name>aruco_box_6</name>
+      <static>true</static>
+      <pose>-7.3712 -3.04612 0.8594 3.14159 -1.57079 3.13857</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_7</uri>
+      <name>aruco_box_7</name>
+      <static>true</static>
+      <pose>-7.3728 -2.6174 0.8594 -2.21648 -1.57079 2.21649</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_8</uri>
+      <name>aruco_box_8</name>
+      <static>true</static>
+      <pose>-7.37193 -2.83625 0.8594 1.91075 -1.57079 -1.91969</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_9</uri>
+      <name>aruco_box_9</name>
+      <static>true</static>
+      <pose>-6.84947 -2.61352 0.8594 0.000107 -1.57079 -0.000107</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_10</uri>
+      <name>aruco_box_10</name>
+      <static>true</static>
+      <pose>-7.37346 -3.29522 0.8594 -3.11502 -1.57079 3.11502</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_11</uri>
+      <name>aruco_box_11</name>
+      <static>true</static>
+      <pose>-6.84392 -2.83912 0.8594 3.14159 -1.57079 3.14159</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_12</uri>
+      <name>aruco_box_12</name>
+      <static>true</static>
+      <pose>-7.58616 -3.29706 0.8594 -3.13202 -1.57079 -3.14139</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_13</uri>
+      <name>aruco_box_13</name>
+      <static>true</static>
+      <pose>-7.5721 -3.05363 0.8594 -0.010379 -1.57079 0.016719</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_14</uri>
+      <name>aruco_box_14</name>
+      <static>true</static>
+      <pose>-6.85005 -3.069 0.8594 1.16019 -1.57079 -1.16019</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_15</uri>
+      <name>aruco_box_15</name>
+      <static>true</static>
+      <pose>-6.85125 -3.28218 0.8594 0.000233 -1.57079 -0.000243</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_16</uri>
+      <name>aruco_box_16</name>
+      <static>true</static>
+      <pose>-6.63113 -3.29016 0.8594 -2.14183 -1.57079 2.13473</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_17</uri>
+      <name>aruco_box_17</name>
+      <static>true</static>
+      <pose>-6.38479 -3.2906 0.8594 0.213262 -1.57079 -0.166272</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_18</uri>
+      <name>aruco_box_18</name>
+      <static>true</static>
+      <pose>-6.36807 -2.6148 0.8594 -3e-06 -1.57079 -3e-06</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_19</uri>
+      <name>aruco_box_19</name>
+      <static>true</static>
+      <pose>-6.62108 -2.61689 0.8594 -1.67279 -1.57079 -1.486</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_20</uri>
+      <name>aruco_box_20</name>
+      <static>true</static>
+      <pose>-6.62411 -3.06405 0.8594 -2.63886 -1.57079 -0.50273</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_21</uri>
+      <name>aruco_box_21</name>
+      <static>true</static>
+      <pose>-6.37477 -3.06105 0.8594 -3.14153 -1.57079 3.14154</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_22</uri>
+      <name>aruco_box_22</name>
+      <static>true</static>
+      <pose>-6.37853 -2.83114 0.8594 -1.636 -1.57079 1.64431</pose>
+    </include>
+    <include>
+      <uri>file:///home/viswa/Desktop/Gazebo_models/aruco_boxes/box_23</uri>
+      <name>aruco_box_23</name>
+      <static>true</static>
+      <pose>-6.6123 -2.83954 0.8594 -2.80506 -1.57079 2.80486</pose>
+    </include>
+    <light name='sun' type='directional'>
+      <pose>0 0 10 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>-0.5 0.1 -0.9</direction>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <linear>0.01</linear>
+        <constant>0.90000000000000002</constant>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <light name='Warehouse_CeilingLight_003' type='point'>
+      <pose>0 0 8.5 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>80</range>
+        <linear>0.01</linear>
+        <constant>0.29999999999999999</constant>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+  </world>
+</sdf>

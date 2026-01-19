@@ -32,7 +32,7 @@ def generate_launch_description():
     
     declare_world_file_cmd = DeclareLaunchArgument(
         'world_file',
-        default_value=os.path.join(pkg_share, 'worlds', 'test_world_v2.sdf'),
+        default_value=os.path.join(pkg_share, 'worlds', 'test_world_v3_static.sdf'),
         description='Path to the world file to load'
     )
 
