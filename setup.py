@@ -33,6 +33,8 @@ setup(
     entry_points={
         'console_scripts': [
             'object_state_manager = swarm_bringup.object_state_manager:main',
+            'simple_gripper_service = swarm_bringup.simple_gripper_service:main',
+            'detach_all_boxes = swarm_bringup.detach_all_boxes:main',
         ],
     },
 )
