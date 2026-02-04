@@ -22,7 +22,7 @@ def generate_launch_description():
     # Declare launch arguments
     world_name_arg = DeclareLaunchArgument(
         'world_name',
-        default_value='construction_world_v3',
+        default_value='construction_world',
         description='Name of the Gazebo world (must match the world name in SDF)'
     )
 

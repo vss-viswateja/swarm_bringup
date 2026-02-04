@@ -2,22 +2,29 @@
 """
 Simple Gripper Service Node
 
-This node provides ROS 2 services to simulate a vacuum gripper by dynamically
-spawning and removing fixed joints between the robot end-effector and objects
-in Gazebo Fortress.
+This node provides ROS 2 services to simulate a vacuum gripper by using
+the DetachableJoint plugin in Gazebo Fortress. It sends attach/detach
+commands via Ignition Transport topics.
 
 Services:
     /attach_object (AttachObject): Attach an object to the robot gripper
     /detach_object (DetachObject): Detach an object from the gripper
 
 Parameters:
-    world_name (str): Gazebo world name (default: "construction_world_v3")
+    world_name (str): Gazebo world name
+    robot_model (str): Robot model name used in URDF detachable joint topics
+                       (e.g., 'ur5_assembly', 'mobile_manipulator')
+
+Note:
+    The robot URDF must include DetachableJoint plugins from detachable_joints.xacro
+    for this service to work. The attach/detach topics are:
+        /<robot_model>/attach_box_<id>
+        /<robot_model>/detach_box_<id>
 """
 
-import os
 import subprocess
-import tempfile
 import time
+import re
 
 import rclpy
 from rclpy.node import Node
@@ -28,65 +35,34 @@ from swarm_interfaces.srv import AttachObject, DetachObject
 
 class SimpleGripperService(Node):
     """
-    A ROS 2 node that simulates a vacuum gripper using dynamic joint spawning.
+    A ROS 2 node that simulates a vacuum gripper using DetachableJoint plugin.
     
-    The "attach" operation spawns a fixed joint between the robot's end-effector
-    and the target object. The "detach" operation removes this joint.
+    Uses Ignition Transport topics to send attach/detach commands to the
+    DetachableJoint plugins defined in the robot's URDF.
     """
-
-    # SDF template for the gripper attachment
-    # We create a minimal model with a virtual link and a fixed joint connecting
-    # the parent (robot link) to the child (object link)
-    # The virtual link has negligible mass and acts as the joint anchor
-    JOINT_SDF_TEMPLATE = '''<?xml version="1.0"?>
-<sdf version="1.9">
-  <model name="{joint_name}">
-    <static>false</static>
-    <pose>{child_x} {child_y} {child_z} 0 0 0</pose>
-    
-    <!-- Virtual link that anchors the joint -->
-    <link name="virtual_link">
-      <pose>0 0 0 0 0 0</pose>
-      <inertial>
-        <mass>0.001</mass>
-        <inertia>
-          <ixx>0.000001</ixx>
-          <iyy>0.000001</iyy>
-          <izz>0.000001</izz>
-          <ixy>0</ixy>
-          <ixz>0</ixz>
-          <iyz>0</iyz>
-        </inertia>
-      </inertial>
-    </link>
-    
-    <!-- Joint connecting gripper model to parent (robot end-effector) -->
-    <joint name="attach_to_gripper" type="fixed">
-      <parent>{parent_model}::{parent_link}</parent>
-      <child>virtual_link</child>
-    </joint>
-    
-    <!-- Joint connecting virtual link to child (object) -->
-    <joint name="attach_to_object" type="fixed">
-      <parent>virtual_link</parent>
-      <child>{child_model}::{child_link}</child>
-    </joint>
-  </model>
-</sdf>'''
 
     def __init__(self):
         super().__init__('simple_gripper_service')
 
         # Declare parameters
-        self.declare_parameter('world_name', 'construction_world_v3')
+        self.declare_parameter('world_name', 'construction_world')
+        self.declare_parameter('robot_model', 'mobile_manipulator')
+        
         self.world_name = self.get_parameter('world_name').get_parameter_value().string_value
+        self.robot_model = self.get_parameter('robot_model').get_parameter_value().string_value
+        
+        if not self.world_name:
+            self.get_logger().warn('No world_name specified!')
+        if not self.robot_model:
+            self.get_logger().warn('No robot_model specified! Using "mobile_manipulator" as default.')
+            self.robot_model = 'mobile_manipulator'
 
         # Use reentrant callback group for service calls
         self.callback_group = ReentrantCallbackGroup()
 
-        # Track active joints for cleanup
-        # Format: {'joint_name': {'parent': 'robot::link', 'child': 'object::link', 'created_at': timestamp}}
-        self.active_joints = {}
+        # Track attached objects for reference
+        # Format: {'aruco_box_30': {'attached_at': timestamp, 'robot_model': 'mobile_manipulator'}}
+        self.attached_objects = {}
 
         # Create services
         self.attach_srv = self.create_service(
@@ -102,63 +78,57 @@ class SimpleGripperService(Node):
             callback_group=self.callback_group
         )
 
+        # Get namespace for accurate logging
+        ns = self.get_namespace()
+        ns_prefix = ns if ns != '/' else ''
+        
         self.get_logger().info('Simple Gripper Service ready!')
         self.get_logger().info(f'  World: {self.world_name}')
-        self.get_logger().info('  Services: /attach_object, /detach_object')
+        self.get_logger().info(f'  Robot Model (for ign topics): {self.robot_model}')
+        self.get_logger().info(f'  Services: {ns_prefix}/attach_object, {ns_prefix}/detach_object')
+        self.get_logger().info(f'  Ign attach topic pattern: /{self.robot_model}/attach_box_<id>')
+        self.get_logger().info(f'  Ign detach topic pattern: /{self.robot_model}/detach_box_<id>')
 
     def attach_callback(self, request: AttachObject.Request, response: AttachObject.Response):
         """
         Service callback to attach an object to the robot gripper.
         
-        Creates a fixed joint between the parent (robot link) and child (object link).
+        Uses the DetachableJoint plugin by publishing to the attach topic.
+        The request parameters parent_model and parent_link are used for logging
+        but the actual robot_model comes from the node parameter since the
+        DetachableJoint topics are defined in the URDF.
         """
-        parent_model = request.parent_model
-        parent_link = request.parent_link
-        child_model = request.child_model
-        child_link = request.child_link if request.child_link else 'link'
+        child_model = request.child_model  # e.g., 'aruco_box_30'
+        
+        # Extract box ID from the model name (e.g., 'aruco_box_30' -> '30')
+        box_id = self._extract_box_id(child_model)
+        if box_id is None:
+            response.success = False
+            response.message = f"Could not extract box ID from '{child_model}'. Expected format: 'aruco_box_<id>'"
+            response.joint_name = ""
+            self.get_logger().error(response.message)
+            return response
 
         self.get_logger().info(
-            f"Attaching: {parent_model}::{parent_link} -> {child_model}::{child_link}"
+            f"Attaching: {child_model} to {request.parent_model}::{request.parent_link} "
+            f"(using topic: /{self.robot_model}/attach_box_{box_id})"
         )
 
-        # Get child object's current position for the model pose
-        child_pos = self._get_model_position(child_model)
-        if child_pos is None:
-            child_pos = (0.0, 0.0, 0.0)
-            self.get_logger().warn(f"Could not get position for {child_model}, using origin")
-
-        # Generate unique joint name
-        timestamp = int(time.time() * 1000)
-        joint_name = f"gripper_joint_{child_model}_{timestamp}"
-
-        # Generate SDF for the joint
-        sdf_content = self.JOINT_SDF_TEMPLATE.format(
-            joint_name=joint_name,
-            parent_model=parent_model,
-            parent_link=parent_link,
-            child_model=child_model,
-            child_link=child_link,
-            child_x=child_pos[0],
-            child_y=child_pos[1],
-            child_z=child_pos[2]
-        )
-
-        self.get_logger().debug(f"Generated SDF:\n{sdf_content}")
-
-        # Spawn the joint in Gazebo
-        success, message = self._spawn_joint(joint_name, sdf_content)
+        # Send attach command via ign topic
+        success, message = self._send_attach_command(box_id)
 
         if success:
-            # Track the joint for later cleanup
-            self.active_joints[joint_name] = {
-                'parent': f"{parent_model}::{parent_link}",
-                'child': f"{child_model}::{child_link}",
-                'created_at': time.time()
+            # Track the attachment
+            joint_name = f"detachable_joint_{child_model}"
+            self.attached_objects[child_model] = {
+                'attached_at': time.time(),
+                'robot_model': self.robot_model,
+                'box_id': box_id
             }
             response.success = True
-            response.message = f"Successfully attached {child_model} to {parent_model}"
+            response.message = f"Successfully attached {child_model} to {request.parent_model}"
             response.joint_name = joint_name
-            self.get_logger().info(f"Attached successfully. Joint name: {joint_name}")
+            self.get_logger().info(f"Attached successfully: {child_model}")
         else:
             response.success = False
             response.message = message
@@ -171,26 +141,35 @@ class SimpleGripperService(Node):
         """
         Service callback to detach an object from the robot gripper.
         
-        Removes the joint entity from Gazebo.
+        The joint_name should be in format 'detachable_joint_aruco_box_<id>'
+        or just 'aruco_box_<id>'.
         """
         joint_name = request.joint_name
 
-        self.get_logger().info(f"Detaching joint: {joint_name}")
+        self.get_logger().info(f"Detaching: {joint_name}")
 
-        # Check if joint exists in our tracking
-        if joint_name not in self.active_joints:
-            self.get_logger().warn(f"Joint {joint_name} not in active joints, but will try to remove anyway")
+        # Extract box ID from joint name
+        # Handle both 'detachable_joint_aruco_box_30' and 'aruco_box_30' formats
+        box_id = self._extract_box_id(joint_name)
+        if box_id is None:
+            response.success = False
+            response.message = f"Could not extract box ID from '{joint_name}'. Expected format containing 'aruco_box_<id>'"
+            self.get_logger().error(response.message)
+            return response
 
-        # Remove the joint from Gazebo
-        success, message = self._remove_joint(joint_name)
+        # Determine the object name
+        object_name = f"aruco_box_{box_id}"
+
+        # Send detach command via ign topic
+        success, message = self._send_detach_command(box_id)
 
         if success:
             # Remove from tracking
-            if joint_name in self.active_joints:
-                del self.active_joints[joint_name]
+            if object_name in self.attached_objects:
+                del self.attached_objects[object_name]
             response.success = True
-            response.message = f"Successfully detached joint {joint_name}"
-            self.get_logger().info(f"Detached successfully: {joint_name}")
+            response.message = f"Successfully detached {object_name}"
+            self.get_logger().info(f"Detached successfully: {object_name}")
         else:
             response.success = False
             response.message = message
@@ -198,147 +177,82 @@ class SimpleGripperService(Node):
 
         return response
 
-    def _get_model_position(self, model_name: str) -> tuple:
+    def _extract_box_id(self, name: str) -> str:
         """
-        Get the current position of a model from Gazebo.
+        Extract the box ID number from a name string.
+        
+        Handles formats like:
+          - 'aruco_box_30' -> '30'
+          - 'detachable_joint_aruco_box_30' -> '30'
+          - 'gripper_joint_aruco_box_30_123456' -> '30'
+        
+        Returns None if no ID could be extracted.
+        """
+        # Look for 'aruco_box_<number>' pattern
+        match = re.search(r'aruco_box_(\d+)', name)
+        if match:
+            return match.group(1)
+        return None
+
+    def _send_attach_command(self, box_id: str) -> tuple:
+        """
+        Send attach command to DetachableJoint plugin via ign topic.
         
         Args:
-            model_name: Name of the model
+            box_id: The aruco box ID number (e.g., '30')
             
         Returns:
-            Tuple of (x, y, z) or None if failed
+            Tuple of (success, message)
+        """
+        topic = f"/{self.robot_model}/attach_box_{box_id}"
+        return self._send_ign_topic_command(topic, "attach")
+
+    def _send_detach_command(self, box_id: str) -> tuple:
+        """
+        Send detach command to DetachableJoint plugin via ign topic.
+        
+        Args:
+            box_id: The aruco box ID number (e.g., '30')
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        topic = f"/{self.robot_model}/detach_box_{box_id}"
+        return self._send_ign_topic_command(topic, "detach")
+
+    def _send_ign_topic_command(self, topic: str, action: str) -> tuple:
+        """
+        Send an Empty message to an Ignition topic.
+        
+        Args:
+            topic: The Ignition topic to publish to
+            action: Description for logging ('attach' or 'detach')
+            
+        Returns:
+            Tuple of (success, message)
         """
         try:
-            import re
+            self.get_logger().debug(f"Sending {action} command to topic: {topic}")
             
             result = subprocess.run(
-                ['ign', 'model', '-m', model_name, '-p'],
+                ['ign', 'topic', '-t', topic, '-m', 'ignition.msgs.Empty', '-p', ''],
                 capture_output=True, text=True, timeout=5
             )
             
-            output = result.stdout
+            # ign topic doesn't return meaningful output on success
+            # Check for errors in stderr
+            if result.returncode != 0:
+                error_msg = result.stderr if result.stderr else f"Command returned code {result.returncode}"
+                self.get_logger().error(f"ign topic command failed: {error_msg}")
+                return False, f"ign topic command failed: {error_msg}"
             
-            # Parse position: look for [x y z] pattern
-            # Format: [-6.849470 2.652150 0.859400]
-            bracket_pattern = r'\[([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\]'
-            matches = re.findall(bracket_pattern, output)
+            self.get_logger().debug(f"Successfully sent {action} command to {topic}")
+            return True, f"Successfully sent {action} command"
             
-            if matches:
-                x = float(matches[0][0])
-                y = float(matches[0][1])
-                z = float(matches[0][2])
-                self.get_logger().debug(f"Got position for {model_name}: ({x}, {y}, {z})")
-                return (x, y, z)
-            else:
-                self.get_logger().warn(f"Could not parse position for {model_name}")
-                return None
-                
-        except Exception as e:
-            self.get_logger().warn(f"Exception getting position for {model_name}: {e}")
-            return None
-
-    def _spawn_joint(self, joint_name: str, sdf_content: str) -> tuple[bool, str]:
-        """
-        Spawn a joint entity in Gazebo using the create service.
-        
-        Args:
-            joint_name: Name of the joint to create
-            sdf_content: SDF XML content for the joint
-            
-        Returns:
-            Tuple of (success, message)
-        """
-        sdf_file = None
-        try:
-            # Write SDF to a temporary file
-            sdf_file = f'/tmp/gripper_joint_{int(time.time() * 1000)}.sdf'
-            with open(sdf_file, 'w') as f:
-                f.write(sdf_content)
-
-            self.get_logger().debug(f"Created SDF file: {sdf_file}")
-
-            # Call Gazebo create service
-            service_name = f'/world/{self.world_name}/create'
-            req_type = 'ignition.msgs.EntityFactory'
-            rep_type = 'ignition.msgs.Boolean'
-
-            request_msg = f'sdf_filename: "{sdf_file}", name: "{joint_name}"'
-
-            self.get_logger().debug(f"Calling service: {service_name}")
-
-            result = subprocess.run(
-                ['ign', 'service', '-s', service_name,
-                 '--reqtype', req_type, '--reptype', rep_type,
-                 '--timeout', '5000', '--req', request_msg],
-                capture_output=True, text=True, timeout=10
-            )
-
-            self.get_logger().debug(f"Service result: {result.stdout}")
-
-            # Wait for Gazebo to read the file
-            time.sleep(0.3)
-
-            # Cleanup temp file
-            if sdf_file and os.path.exists(sdf_file):
-                os.unlink(sdf_file)
-
-            if 'data: true' in result.stdout.lower():
-                return True, "Joint created successfully"
-            else:
-                error_msg = result.stderr if result.stderr else result.stdout
-                return False, f"Gazebo service returned false: {error_msg}"
-
         except subprocess.TimeoutExpired:
-            return False, "Timeout calling Gazebo create service"
+            return False, f"Timeout sending {action} command to {topic}"
         except Exception as e:
-            return False, f"Exception spawning joint: {str(e)}"
-        finally:
-            # Ensure cleanup
-            if sdf_file and os.path.exists(sdf_file):
-                try:
-                    os.unlink(sdf_file)
-                except:
-                    pass
-
-    def _remove_joint(self, joint_name: str) -> tuple[bool, str]:
-        """
-        Remove a joint entity from Gazebo using the remove service.
-        
-        Args:
-            joint_name: Name of the joint to remove
-            
-        Returns:
-            Tuple of (success, message)
-        """
-        try:
-            service_name = f'/world/{self.world_name}/remove'
-            req_type = 'ignition.msgs.Entity'
-            rep_type = 'ignition.msgs.Boolean'
-
-            # Entity type 2 = MODEL (we create a model that contains the joint)
-            request_msg = f'name: "{joint_name}", type: 2'
-
-            self.get_logger().debug(f"Calling remove service for joint: {joint_name}")
-
-            result = subprocess.run(
-                ['ign', 'service', '-s', service_name,
-                 '--reqtype', req_type, '--reptype', rep_type,
-                 '--timeout', '5000', '--req', request_msg],
-                capture_output=True, text=True, timeout=10
-            )
-
-            self.get_logger().debug(f"Remove result: {result.stdout}")
-
-            if 'data: true' in result.stdout.lower():
-                return True, "Joint removed successfully"
-            else:
-                error_msg = result.stderr if result.stderr else result.stdout
-                return False, f"Gazebo service returned false: {error_msg}"
-
-        except subprocess.TimeoutExpired:
-            return False, "Timeout calling Gazebo remove service"
-        except Exception as e:
-            return False, f"Exception removing joint: {str(e)}"
+            return False, f"Exception sending {action} command: {str(e)}"
 
 
 def main(args=None):

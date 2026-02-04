@@ -35,6 +35,10 @@ setup(
             'object_state_manager = swarm_bringup.object_state_manager:main',
             'simple_gripper_service = swarm_bringup.simple_gripper_service:main',
             'detach_all_boxes = swarm_bringup.detach_all_boxes:main',
+            'jackal_nav_action_server = swarm_bringup.jackal_nav_action_server:main',
+            'mobman_task_action_server = swarm_bringup.mobman_task_action_server:main',
+            'ur5_task_action_server = swarm_bringup.ur5_task_action_server:main',
+            'chars_central_allocator = swarm_bringup.chars_central_allocator:main',
         ],
     },
 )

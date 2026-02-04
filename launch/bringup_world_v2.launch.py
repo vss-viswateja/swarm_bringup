@@ -32,7 +32,7 @@ def generate_launch_description():
     
     declare_world_file_cmd = DeclareLaunchArgument(
         'world_file',
-        default_value=os.path.join(pkg_share, 'worlds', 'test_world_v4.sdf'),
+        default_value=os.path.join(pkg_share, 'worlds', 'test_world_v2.sdf'),
         description='Path to the world file to load'
     )
 
@@ -97,16 +97,52 @@ def generate_launch_description():
         arguments=[
             '-name', 'cam1',
             '-topic', 'robot_description',  # Use relative topic name
-            '-x', '-7.01',
-            '-y', '-3.0',
-            '-z', '0.29',
+            '-x', '0.36',
+            '-y', '2.7',
+            '-z', '0.05',
             '-R', '0',
             '-P', '0',
-            '-Y', '1.57',
+            '-Y', '0',
         ],
         output='screen',
     )
 
+    # Static transform from map to camera_base
+    static_tf_map_to_camera = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_map_to_camera_base',
+        output='screen',
+        arguments=[
+            '--x', '0.36',
+            '--y', '2.7',
+            '--z', '0.1',
+            '--roll', '0',
+            '--pitch', '0',
+            '--yaw', '0',
+            '--frame-id', 'gz_world',
+            '--child-frame-id', 'cam1/camera_base'
+        ],
+        parameters=[{'use_sim_time': True}]
+    )
+
+    static_tf_map_to_gz_world = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_map_to_gz_world',
+        output='screen',
+        arguments=[
+            '--x', '0.0',
+            '--y', '-3.0',
+            '--z', '0.213',
+            '--roll', '0',
+            '--pitch', '0',
+            '--yaw', '0',
+            '--frame-id', 'gz_world',
+            '--child-frame-id', 'map'
+        ],
+        parameters=[{'use_sim_time': True}]
+    )
 
     robot_description_2 = ParameterValue(
         Command(['xacro ', xacro_path, ' robot_namespace:=', 'cam2']), 
@@ -167,10 +203,19 @@ def generate_launch_description():
         name='parameter_bridge',
         output='screen',
         parameters=[{
-            'config_file': os.path.join(pkg_share, 'config', 'swarm_bridge.yaml')
+            'config_file': os.path.join(pkg_share, 'config', 'world_v2_mobman_bridge.yaml')
         }]
     )
-    
+
+    # Object State Manager launch (for switching boxes between static/dynamic)
+    object_state_manager_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([os.path.join(
+            pkg_share, 'launch', 'object_state_manager.launch.py')]),
+        launch_arguments={
+            'world_name': 'construction_world',
+            'use_sim_time': 'true',
+        }.items(),
+    )
 
 
     # Create and return launch description
@@ -188,17 +233,24 @@ def generate_launch_description():
             actions=[
                 robot_state_publisher_node_1,
                 spawn_cam_1,
+                static_tf_map_to_camera,
+                static_tf_map_to_gz_world,
             ]
         ),
         # Delay cam2 spawn to avoid race condition with cam1
-        TimerAction(
-            period=6.0,
-            actions=[
-                robot_state_publisher_node_2,
-                spawn_cam_2,
-            ]
-        ),
+        # TimerAction(
+        #     period=6.0,
+        #     actions=[
+        #         robot_state_publisher_node_2,
+        #         spawn_cam_2,
+        #     ]
+        # ),
         rviz,
+        # Delay object_state_manager to ensure Gazebo is ready
+        TimerAction(
+            period=5.0,
+            actions=[object_state_manager_launch]
+        ),
     ])
 
     return ld
