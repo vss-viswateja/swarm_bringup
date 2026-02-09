@@ -39,6 +39,7 @@ setup(
             'mobman_task_action_server = swarm_bringup.mobman_task_action_server:main',
             'ur5_task_action_server = swarm_bringup.ur5_task_action_server:main',
             'chars_central_allocator = swarm_bringup.chars_central_allocator:main',
+            'trajectory_recorder = swarm_bringup.trajectory_recorder:main',
         ],
     },
 )
