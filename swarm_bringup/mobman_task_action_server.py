@@ -35,6 +35,7 @@ from sensor_msgs.msg import JointState
 from swarm_interfaces.action import RobotTask
 from swarm_interfaces.srv import AttachObject, DetachObject, SetBoxState
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints,
@@ -46,7 +47,9 @@ from moveit_msgs.msg import (
 from shape_msgs.msg import SolidPrimitive
 
 from tf2_ros import Buffer, TransformListener, LookupException
+import tf2_geometry_msgs
 
+import math
 import threading
 import time
 from action_msgs.msg import GoalStatus
@@ -72,16 +75,41 @@ class MobManTaskActionServer(Node):
         self.declare_parameter('end_effector_link', 'arm_link6_1')
         self.declare_parameter('base_frame', 'mobman/base_link')
         self.declare_parameter('planning_frame', 'mobman/world')
+        self.declare_parameter('transform_frame', 'mobman/chassis_link')
         self.declare_parameter('feedback_rate', 2.0)  # 500ms = 2Hz
         self.declare_parameter('planning_time', 10.0)
+        self.declare_parameter('nav_stuck_threshold', 0.05)  # meters
+        self.declare_parameter('nav_stuck_timeout', 60.0)    # seconds
+        self.declare_parameter('nav_max_retries', 3)
+        # Place / Pick standoff search parameters
+        self.declare_parameter('pick_radius_min', 0.7)          # inner ring radius (m)
+        self.declare_parameter('place_radius_min', 0.5)          # inner ring radius (m)
+        self.declare_parameter('pick_radius_max', 0.85)          # outer ring radius (m)
+        self.declare_parameter('place_radius_max', 0.8)          # outer ring radius (m)
+        self.declare_parameter('place_angle_step', 30.0)         # angular step in degrees
+        self.declare_parameter('place_max_retries', 5)           # max IK-invalid candidates before abort
+        self.declare_parameter('pick_max_retries', 5)            # max IK-invalid candidates before abort (pick)
+        self.declare_parameter('costmap_lethal_threshold', 253)  # cost value above which cell is "lethal"
         
         self.robot_namespace = self.get_parameter('robot_namespace').value
         self.planning_group = self.get_parameter('planning_group').value
         self.ee_link = self.get_parameter('end_effector_link').value
         self.base_frame = self.get_parameter('base_frame').value
         self.planning_frame = self.get_parameter('planning_frame').value
+        self.transform_frame = self.get_parameter('transform_frame').value
         self.feedback_rate = self.get_parameter('feedback_rate').value
         self.planning_time = self.get_parameter('planning_time').value
+        self.nav_stuck_threshold = self.get_parameter('nav_stuck_threshold').value
+        self.nav_stuck_timeout = self.get_parameter('nav_stuck_timeout').value
+        self.nav_max_retries = self.get_parameter('nav_max_retries').value
+        self.place_radius_min = self.get_parameter('place_radius_min').value
+        self.place_radius_max = self.get_parameter('place_radius_max').value
+        self.place_angle_step = self.get_parameter('place_angle_step').value
+        self.place_max_retries = self.get_parameter('place_max_retries').value
+        self.pick_max_retries = self.get_parameter('pick_max_retries').value
+        self.pick_radius_min = self.get_parameter('pick_radius_min').value
+        self.pick_radius_max = self.get_parameter('pick_radius_max').value
+        self.costmap_lethal_threshold = self.get_parameter('costmap_lethal_threshold').value
         
         # State tracking
         self._current_base_pose = None
@@ -157,6 +185,30 @@ class MobManTaskActionServer(Node):
             callback_group=self.service_cb_group
         )
         
+        # Service client for clearing global costmap (removes ghost obstacles from other agents)
+        clear_costmap_service = f'/{self.robot_namespace}/global_costmap/clear_entirely_global_costmap'
+        self._clear_costmap_client = self.create_client(
+            ClearEntireCostmap,
+            clear_costmap_service,
+            callback_group=self.service_cb_group
+        )
+        
+        # Service client for querying global costmap (used in standoff pose search)
+        get_costmap_service = f'/{self.robot_namespace}/global_costmap/get_costmap'
+        self._get_costmap_client = self.create_client(
+            GetCostmap,
+            get_costmap_service,
+            callback_group=self.service_cb_group
+        )
+        
+        # Periodic timer to clear global costmap every 5 seconds
+        self._costmap_clear_timer = self.create_timer(
+            10.0,
+            self._clear_global_costmap_callback,
+            callback_group=self.action_cb_group
+        )
+        self.get_logger().info(f'Global costmap clear timer started (every 5s): {clear_costmap_service}')
+        
         # Action Server for RobotTask
         task_action_name = f'/{self.robot_namespace}/task_control'
         self._action_server = ActionServer(
@@ -182,6 +234,22 @@ class MobManTaskActionServer(Node):
         self.get_logger().info(f'  Feedback Rate: {self.feedback_rate} Hz')
         self.get_logger().info('=' * 70)
 
+    def _clear_global_costmap_callback(self):
+        """Periodically clear the global costmap to remove ghost obstacles from other agents."""
+        if not self._clear_costmap_client.service_is_ready():
+            return
+        
+        request = ClearEntireCostmap.Request()
+        future = self._clear_costmap_client.call_async(request)
+        future.add_done_callback(self._costmap_clear_done)
+    
+    def _costmap_clear_done(self, future):
+        """Callback for costmap clear service completion."""
+        try:
+            future.result()
+        except Exception as e:
+            self.get_logger().debug(f'Costmap clear failed: {e}')
+
     def _pose_callback(self, msg: PoseWithCovarianceStamped):
         """Update current base pose from AMCL."""
         with self._pose_lock:
@@ -191,7 +259,7 @@ class MobManTaskActionServer(Node):
         """Get current end-effector pose from TF."""
         try:
             transform = self.tf_buffer.lookup_transform(
-                self.planning_frame,
+                self.transform_frame,
                 self.ee_link,
                 rclpy.time.Time(),
                 timeout=rclpy.duration.Duration(seconds=0.5)
@@ -295,71 +363,174 @@ class MobManTaskActionServer(Node):
         
         return result
 
-    async def _execute_navigate(self, goal_handle, target_pose: PoseStamped) -> RobotTask.Result:
-        """Execute navigation task using Nav2."""
+    async def _execute_navigate(
+        self,
+        goal_handle,
+        target_pose: PoseStamped,
+        is_subtask: bool = False,
+    ) -> RobotTask.Result:
+        """Execute navigation task using Nav2 with stuck detection.
+
+        Args:
+            goal_handle:  The RobotTask action goal handle.
+            target_pose:  Desired Nav2 pose.
+            is_subtask:   When True, this call is a SUB-STEP of a larger task
+                          (e.g. standoff navigation inside _execute_place).
+                          In that mode the function does NOT call any terminal
+                          goal_handle method (succeed/abort/canceled) — the
+                          caller owns the goal handle lifecycle.
+                          When False (default), navigate is the top-level task
+                          and it sets the goal handle terminal state itself.
+
+        If the robot's x,y position doesn't change by more than nav_stuck_threshold
+        for nav_stuck_timeout seconds, the Nav2 goal is canceled and re-sent.
+        After nav_max_retries re-sends, navigation is aborted.
+        """
         self._current_status = 'Moving Base'
         result = RobotTask.Result()
-        
-        # Create Nav2 goal
-        nav2_goal = NavigateToPose.Goal()
-        nav2_goal.pose = target_pose
-        
-        self.get_logger().info('Sending navigation goal to Nav2...')
-        send_goal_future = self._nav2_client.send_goal_async(nav2_goal)
-        nav2_goal_handle = await send_goal_future
-        
-        if not nav2_goal_handle.accepted:
-            self.get_logger().error('Nav2 goal was rejected!')
-            result.success = False
-            result.message = 'Nav2 rejected the navigation goal'
-            goal_handle.abort()
-            return result
-        
-        self.get_logger().info('Nav2 goal accepted')
-        
-        with self._nav2_lock:
-            self._nav2_goal_handle = nav2_goal_handle
-        
-        # Start feedback loop
-        result_future = nav2_goal_handle.get_result_async()
-        feedback_period = 1.0 / self.feedback_rate  # 500ms
-        
-        while not result_future.done():
-            if goal_handle.is_cancel_requested or self._cancel_requested:
-                self.get_logger().info('Navigation canceled')
-                self._cancel_nav2_goal()
-                goal_handle.canceled()
+        retry_count = 0
+
+        while retry_count <= self.nav_max_retries:
+            # Create and send Nav2 goal
+            nav2_goal = NavigateToPose.Goal()
+            nav2_goal.pose = target_pose
+
+            attempt_str = f' (retry {retry_count}/{self.nav_max_retries})' if retry_count > 0 else ''
+            self.get_logger().info(f'Sending navigation goal to Nav2...{attempt_str}')
+            send_goal_future = self._nav2_client.send_goal_async(nav2_goal)
+            nav2_goal_handle = await send_goal_future
+
+            if not nav2_goal_handle.accepted:
+                self.get_logger().error('Nav2 goal was rejected!')
                 result.success = False
-                result.message = 'Navigation canceled'
+                result.message = 'Nav2 rejected the navigation goal'
+                if not is_subtask:
+                    goal_handle.abort()
                 return result
-            
-            # Publish feedback
-            feedback = RobotTask.Feedback()
-            feedback.current_status = 'Moving Base'
-            with self._pose_lock:
-                if self._current_base_pose is not None:
-                    feedback.current_pose = self._current_base_pose
-            goal_handle.publish_feedback(feedback)
-            
-            time.sleep(feedback_period)
-        
-        # Process result
-        nav2_result = result_future.result()
-        
-        with self._nav2_lock:
-            self._nav2_goal_handle = None
-        
-        if nav2_result.status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info('Navigation succeeded!')
-            result.success = True
-            result.message = 'Navigation completed successfully'
-            goal_handle.succeed()
-        else:
-            self.get_logger().error(f'Navigation failed: status={nav2_result.status}')
-            result.success = False
-            result.message = f'Navigation failed with status: {nav2_result.status}'
+
+            self.get_logger().info('Nav2 goal accepted')
+
+            with self._nav2_lock:
+                self._nav2_goal_handle = nav2_goal_handle
+
+            # Initialize stuck detection
+            last_moved_x = None
+            last_moved_y = None
+            last_moved_time = time.time()
+            stuck_detected = False
+
+            # Start feedback loop
+            result_future = nav2_goal_handle.get_result_async()
+            feedback_period = 1.0 / self.feedback_rate  # 500ms
+
+            while not result_future.done():
+                if goal_handle.is_cancel_requested or self._cancel_requested:
+                    self.get_logger().info('Navigation canceled')
+                    self._cancel_nav2_goal()
+                    if not is_subtask:
+                        goal_handle.canceled()
+                    result.success = False
+                    result.message = 'Navigation canceled'
+                    self._cancel_requested = True  # propagate to caller
+                    return result
+
+                # Get current pose for stuck detection
+                current_x = None
+                current_y = None
+                with self._pose_lock:
+                    if self._current_base_pose is not None:
+                        current_x = self._current_base_pose.position.x
+                        current_y = self._current_base_pose.position.y
+
+                # Stuck detection logic
+                if current_x is not None and current_y is not None:
+                    if last_moved_x is None:
+                        # First reading — initialize
+                        last_moved_x = current_x
+                        last_moved_y = current_y
+                        last_moved_time = time.time()
+                    else:
+                        dist = math.sqrt(
+                            (current_x - last_moved_x) ** 2 +
+                            (current_y - last_moved_y) ** 2
+                        )
+                        if dist > self.nav_stuck_threshold:
+                            # Robot is moving — update reference
+                            last_moved_x = current_x
+                            last_moved_y = current_y
+                            last_moved_time = time.time()
+                        else:
+                            # Check if stuck timeout exceeded
+                            elapsed = time.time() - last_moved_time
+                            if elapsed > self.nav_stuck_timeout:
+                                self.get_logger().warn(
+                                    f'Robot stuck! Position ({current_x:.3f}, {current_y:.3f}) '
+                                    f'has not changed by > {self.nav_stuck_threshold}m '
+                                    f'for {elapsed:.1f}s. Re-sending goal...'
+                                )
+                                stuck_detected = True
+                                break
+
+                # Publish feedback
+                feedback = RobotTask.Feedback()
+                feedback.current_status = 'Moving Base'
+                with self._pose_lock:
+                    if self._current_base_pose is not None:
+                        feedback.current_pose = self._current_base_pose
+                goal_handle.publish_feedback(feedback)
+
+                time.sleep(feedback_period)
+
+            if stuck_detected:
+                # Cancel the current Nav2 goal and retry
+                self.get_logger().info('Canceling stuck Nav2 goal before retry...')
+                self._cancel_nav2_goal()
+
+                # Wait for cancel to take effect
+                time.sleep(1.0)
+
+                retry_count += 1
+                if retry_count > self.nav_max_retries:
+                    self.get_logger().error(
+                        f'Navigation aborted: robot stuck after {self.nav_max_retries} retries'
+                    )
+                    result.success = False
+                    result.message = (
+                        f'Navigation aborted: robot stuck after '
+                        f'{self.nav_max_retries} retries'
+                    )
+                    if not is_subtask:
+                        goal_handle.abort()
+                    return result
+
+                continue  # Retry with a fresh Nav2 goal
+
+            # Normal completion — process result
+            nav2_result = result_future.result()
+
+            with self._nav2_lock:
+                self._nav2_goal_handle = None
+
+            if nav2_result.status == GoalStatus.STATUS_SUCCEEDED:
+                self.get_logger().info('Navigation succeeded!')
+                result.success = True
+                result.message = 'Navigation completed successfully'
+                if not is_subtask:
+                    goal_handle.succeed()
+            else:
+                self.get_logger().error(f'Navigation failed: status={nav2_result.status}')
+                result.success = False
+                result.message = f'Navigation failed with status: {nav2_result.status}'
+                if not is_subtask:
+                    goal_handle.abort()
+
+            return result
+
+        # Should not reach here, but safety fallback
+        result.success = False
+        result.message = 'Navigation failed unexpectedly'
+        if not is_subtask:
             goal_handle.abort()
-        
         return result
 
     def _get_pose_from_tf(self, target_frame: str, z_offset: float = 0.0) -> PoseStamped:
@@ -371,13 +542,13 @@ class MobManTaskActionServer(Node):
             z_offset: Optional offset to add to Z position (positive = above the frame)
         
         Returns:
-            PoseStamped with the frame's pose relative to planning_frame, or None if lookup fails
+            PoseStamped with the frame's pose relative to transform_frame, or None if lookup fails
         """
         try:
             # Look up the transform from planning frame to target frame
             # This ensures the returned pose is in the frame MoveIt expects
             transform = self.tf_buffer.lookup_transform(
-                self.planning_frame,  # Use planning frame (mobman/world) for MoveIt compatibility
+                self.transform_frame,  # Use planning frame (mobman/world) for MoveIt compatibility
                 target_frame,
                 rclpy.time.Time(),
                 timeout=rclpy.duration.Duration(seconds=2.0)
@@ -385,7 +556,7 @@ class MobManTaskActionServer(Node):
             
             # Create PoseStamped from transform
             pose_stamped = PoseStamped()
-            pose_stamped.header.frame_id = self.planning_frame
+            pose_stamped.header.frame_id = self.transform_frame
             pose_stamped.header.stamp = self.get_clock().now().to_msg()
             pose_stamped.pose.position.x = transform.transform.translation.x
             pose_stamped.pose.position.y = transform.transform.translation.y
@@ -393,7 +564,7 @@ class MobManTaskActionServer(Node):
             pose_stamped.pose.orientation = transform.transform.rotation
             
             self.get_logger().info(
-                f'Got pose for {target_frame} in {self.planning_frame}: '
+                f'Got pose for {target_frame} in {self.transform_frame}: '
                 f'({pose_stamped.pose.position.x:.3f}, '
                 f'{pose_stamped.pose.position.y:.3f}, '
                 f'{pose_stamped.pose.position.z:.3f})'
@@ -402,199 +573,728 @@ class MobManTaskActionServer(Node):
             return pose_stamped
             
         except Exception as e:
-            self.get_logger().error(f'Failed to get TF for {target_frame} from {self.planning_frame}: {e}')
+            self.get_logger().error(f'Failed to get TF for {target_frame} from {self.transform_frame}: {e}')
+            return None
+
+    def _get_object_pose_in_map(self, target_frame: str):
+        """
+        Look up the TF frame position of an object in the map frame.
+
+        Used to find the x, y coordinates in the global map so that
+        standoff candidate base positions can be generated around the object.
+
+        Args:
+            target_frame: TF frame of the object (e.g., 'aruco_box_0')
+
+        Returns:
+            (x, y) tuple in map frame, or (None, None) on failure.
+        """
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'map',
+                target_frame,
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=2.0)
+            )
+            x = transform.transform.translation.x
+            y = transform.transform.translation.y
+            self.get_logger().info(
+                f'[PICK] Object "{target_frame}" in map: ({x:.3f}, {y:.3f})'
+            )
+            return x, y
+        except Exception as e:
+            self.get_logger().error(
+                f'[PICK] Failed to get map-frame pose for "{target_frame}": {e}'
+            )
+            return None, None
+
+    def _transform_pose_to_planning_frame(self, pose_stamped: PoseStamped) -> PoseStamped:
+        """
+        Transform a PoseStamped from its current frame (e.g., 'map') to the
+        planning frame (mobman/chassis_link) using TF2.
+        
+        Args:
+            pose_stamped: Input pose in any frame (expected: 'map')
+        
+        Returns:
+            PoseStamped in the planning frame, or None if transform fails
+        """
+        source_frame = pose_stamped.header.frame_id
+        target_frame = self.transform_frame  # mobman/chassis_link
+        
+        if source_frame == target_frame:
+            self.get_logger().info('Pose is already in the planning frame, no transform needed')
+            return pose_stamped
+        
+        try:
+            # Look up the transform from source frame to planning frame
+            transform = self.tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=2.0)
+            )
+            
+            # Apply the transform to the pose
+            transformed_pose = tf2_geometry_msgs.do_transform_pose_stamped(pose_stamped, transform)
+            
+            self.get_logger().info(
+                f'Transformed pose from {source_frame} to {target_frame}: '
+                f'({pose_stamped.pose.position.x:.3f}, '
+                f'{pose_stamped.pose.position.y:.3f}, '
+                f'{pose_stamped.pose.position.z:.3f}) -> '
+                f'({transformed_pose.pose.position.x:.3f}, '
+                f'{transformed_pose.pose.position.y:.3f}, '
+                f'{transformed_pose.pose.position.z:.3f})'
+            )
+            
+            return transformed_pose
+            
+        except Exception as e:
+            self.get_logger().error(
+                f'Failed to transform pose from {source_frame} to {target_frame}: {e}'
+            )
             return None
 
     async def _execute_pick(self, goal_handle, target_pose: PoseStamped) -> RobotTask.Result:
         """
-        Execute pick task with the following phases:
-        1. Move arm to ready config
-        2. Plan and execute arm motion to pick position
-        3. Make box dynamic
-        4. Attach box
-        5. Return to ready config
-        6. Return to home config
-        
-        The target_pose.header.frame_id should contain the TF frame name of the object to pick (e.g., 'aruco_box_0').
-        The actual pose values in target_pose are ignored - the pose is looked up from TF.
+        Atomic Pick Action with Dynamic Reachability Search.
+
+        Algorithm:
+          Phase 0: Resolve object TF frame name from target_pose.header.frame_id.
+                   Look up object x, y in map frame via TF to generate standoff poses.
+          Phase 1: Generate candidate standoff base poses on rings around the object.
+          Phase 2: Filter candidates by global costmap (reject lethal cells).
+          Phase 3: Rank by distance to current robot position.
+          Phase 4: Iterate candidates:
+            a. Navigate to candidate base pose (Nav2, is_subtask=True).
+            b. Look up fresh TF pose of object in planning frame (with Z offset).
+            c. Probe MoveIt IK (plan only) — if fail, try next candidate.
+            d. Execute the validated MoveIt plan.
+          Phase 5: Make box dynamic, attach object.
+          Phase 6: Return arm to ready, then home.
+
+        The target_pose.header.frame_id must contain the TF frame name of the
+        object to pick (e.g., 'aruco_box_0'). Pose values in target_pose are
+        only used for the arm goal Z height; x/y and standoff positions are
+        derived from TF.
+
+        After pick_max_retries IK failures, abort with "Target Unreachable".
         """
         result = RobotTask.Result()
-        
-        # Extract box name from target pose frame_id (e.g., 'aruco_box_0')
+
+        # ----------------------------------------------------------------
+        # Phase 0: Validate box frame and resolve map-frame x, y from TF
+        # ----------------------------------------------------------------
         box_name = target_pose.header.frame_id if target_pose.header.frame_id else None
-        
+
         if not box_name:
             result.success = False
             result.message = 'Pick failed: No TF frame name provided in target_pose.header.frame_id'
             goal_handle.abort()
             return result
-        
-        # Phase 1: Move arm to ready position first
-        self._current_status = 'Moving to Ready Position'
-        self.get_logger().info('Moving arm to ready position before pick...')
-        
-        ready_success = await self._move_arm_to_named_position(goal_handle, 'ready')
-        
-        if not ready_success:
+
+        self._current_status = 'Resolving Object Position'
+        self.get_logger().info(f'[PICK] Resolving map-frame position of "{box_name}"...')
+
+        obj_map_x, obj_map_y = self._get_object_pose_in_map(box_name)
+
+        if obj_map_x is None:
             result.success = False
-            result.message = 'Failed to move arm to ready position'
+            result.message = f'Pick failed: Cannot find TF frame "{box_name}" in map'
             goal_handle.abort()
             return result
-        
-        if self._cancel_requested:
-            result.success = False
-            result.message = 'Pick task canceled during ready move'
-            goal_handle.canceled()
-            return result
-        
-        # Phase 2: Look up the object pose from TF tree
-        self._current_status = 'Looking up Object Pose'
-        self.get_logger().info(f'Looking up TF frame: {box_name}')
-        
-        # Add a small Z offset (e.g., 12cm above the box) for approach
-        pick_z_offset = 0.11
-        tf_pose = self._get_pose_from_tf(box_name, z_offset=pick_z_offset)
-        
-        if tf_pose is None:
-            result.success = False
-            result.message = f'Pick failed: Could not find TF frame "{box_name}"'
-            goal_handle.abort()
-            return result
-        
-        # Override orientation with a fixed "gripper pointing down" orientation
-        # Quaternion for 90° rotation around Y axis
-        tf_pose.pose.orientation.x = 0.0
-        tf_pose.pose.orientation.y = 0.707
-        tf_pose.pose.orientation.z = 0.0
-        tf_pose.pose.orientation.w = 0.707
-        
+
+        # ----------------------------------------------------------------
+        # Phase 1: Generate standoff candidates (reuse place parameters)
+        # ----------------------------------------------------------------
+        self._current_status = 'Searching Standoff Poses'
         self.get_logger().info(
-            f'Pick target for {box_name}: pos=({tf_pose.pose.position.x:.3f}, '
-            f'{tf_pose.pose.position.y:.3f}, {tf_pose.pose.position.z:.3f}), '
-            f'orientation=gripper-down'
+            f'[PICK] Generating standoff candidates around '
+            f'({obj_map_x:.2f}, {obj_map_y:.2f})'
         )
-        
-        # Phase 3: Plan and execute arm motion to pick position
-        self._current_status = 'Planning Arm Path'
-        self.get_logger().info(f'Planning arm motion to pick {box_name}...')
-        
-        arm_success = await self._move_arm_to_pose(goal_handle, tf_pose)
-        
-        if not arm_success:
+
+        candidates = self._generate_standoff_candidates(obj_map_x, obj_map_y)
+        self.get_logger().info(f'[PICK] Generated {len(candidates)} raw candidates')
+
+        # ----------------------------------------------------------------
+        # Phase 2: Filter by costmap
+        # ----------------------------------------------------------------
+        costmap_msg = await self._get_costmap_snapshot()
+
+        valid_candidates = []
+        for (cx, cy, cyaw) in candidates:
+            cost = self._costmap_cost_at(costmap_msg, cx, cy)
+            if cost < self.costmap_lethal_threshold:
+                valid_candidates.append((cx, cy, cyaw))
+            else:
+                self.get_logger().debug(
+                    f'[PICK] Candidate ({cx:.2f}, {cy:.2f}) rejected: cost={cost}'
+                )
+
+        self.get_logger().info(
+            f'[PICK] {len(valid_candidates)} candidates after costmap filter '
+            f'(lethal threshold={self.costmap_lethal_threshold})'
+        )
+
+        if not valid_candidates:
             result.success = False
-            result.message = 'Failed to move arm to pick position'
+            result.message = 'Pick failed: No obstacle-free standoff positions found around object'
             goal_handle.abort()
             return result
-        
+
+        # ----------------------------------------------------------------
+        # Phase 3: Rank by distance to current robot position
+        # ----------------------------------------------------------------
+        with self._pose_lock:
+            base_pose = self._current_base_pose
+
+        if base_pose is not None:
+            robot_x = base_pose.position.x
+            robot_y = base_pose.position.y
+            valid_candidates.sort(
+                key=lambda c: (c[0] - robot_x) ** 2 + (c[1] - robot_y) ** 2
+            )
+            self.get_logger().info(
+                f'[PICK] Candidates ranked by distance from robot '
+                f'({robot_x:.2f}, {robot_y:.2f})'
+            )
+
+        # ----------------------------------------------------------------
+        # Phase 4: Iterate candidates — navigate → TF re-lookup → IK probe → execute
+        # ----------------------------------------------------------------
+        ik_fail_count = 0
+        arm_success = False
+        pick_z_offset = 0.11  # 11 cm above box top for approach
+
+        for attempt_idx, (cx, cy, cyaw) in enumerate(valid_candidates):
+            if self._cancel_requested:
+                result.success = False
+                result.message = 'Pick task canceled during standoff search'
+                goal_handle.canceled()
+                return result
+
+            if ik_fail_count >= self.pick_max_retries:
+                self.get_logger().error(
+                    f'[PICK] Aborted: IK failed at {ik_fail_count} candidates '
+                    f'(max_retries={self.pick_max_retries})'
+                )
+                result.success = False
+                result.message = (
+                    f'Pick aborted: Target unreachable after '
+                    f'{ik_fail_count} IK-probe failures'
+                )
+                goal_handle.abort()
+                return result
+
+            # Build yaw → quaternion for the base goal pose
+            qz = math.sin(cyaw / 2.0)
+            qw = math.cos(cyaw / 2.0)
+
+            standoff_pose = PoseStamped()
+            standoff_pose.header.frame_id = 'map'
+            standoff_pose.header.stamp = self.get_clock().now().to_msg()
+            standoff_pose.pose.position.x = cx
+            standoff_pose.pose.position.y = cy
+            standoff_pose.pose.position.z = 0.0
+            standoff_pose.pose.orientation.x = 0.0
+            standoff_pose.pose.orientation.y = 0.0
+            standoff_pose.pose.orientation.z = qz
+            standoff_pose.pose.orientation.w = qw
+
+            self.get_logger().info(
+                f'[PICK] Candidate {attempt_idx + 1}/{len(valid_candidates)}: '
+                f'navigating to ({cx:.2f}, {cy:.2f}, yaw={math.degrees(cyaw):.0f}°)'
+            )
+
+            # --- Phase 4a: Navigate to standoff pose ---
+            self._current_status = 'Navigating to Standoff'
+            nav_result = await self._execute_navigate(
+                goal_handle, standoff_pose, is_subtask=True
+            )
+
+            if not nav_result.success:
+                self.get_logger().warn(
+                    f'[PICK] Navigation to candidate {attempt_idx + 1} failed: '
+                    f'{nav_result.message}. Trying next...'
+                )
+                if self._cancel_requested:
+                    result.success = False
+                    result.message = 'Pick task canceled during navigation to standoff'
+                    return result
+                ik_fail_count += 1
+                continue
+
+            if self._cancel_requested:
+                result.success = False
+                result.message = 'Pick task canceled after navigation to standoff'
+                goal_handle.canceled()
+                return result
+
+            # --- Phase 4b: Fresh TF lookup in planning frame after navigation ---
+            self._current_status = 'Looking up Object Pose'
+            self.get_logger().info(
+                f'[PICK] Re-looking up TF for "{box_name}" from candidate '
+                f'{attempt_idx + 1} position...'
+            )
+
+            tf_pose = self._get_pose_from_tf(box_name, z_offset=pick_z_offset)
+
+            if tf_pose is None:
+                self.get_logger().warn(
+                    f'[PICK] TF lookup failed at candidate {attempt_idx + 1}. '
+                    f'Trying next...'
+                )
+                ik_fail_count += 1
+                continue
+
+            # Override orientation: gripper pointing down
+            tf_pose.pose.orientation.x = 0.0
+            tf_pose.pose.orientation.y = 0.707
+            tf_pose.pose.orientation.z = 0.0
+            tf_pose.pose.orientation.w = 0.707
+
+            self.get_logger().info(
+                f'[PICK] Object in {self.planning_frame}: '
+                f'({tf_pose.pose.position.x:.3f}, '
+                f'{tf_pose.pose.position.y:.3f}, '
+                f'{tf_pose.pose.position.z:.3f}) orientation=gripper-down'
+            )
+
+            # --- Phase 4c: MoveIt IK probe (plan only, no execution) ---
+            self._current_status = 'IK Probe'
+            self.get_logger().info(
+                f'[PICK] Running MoveIt IK probe for candidate {attempt_idx + 1}...'
+            )
+
+            ik_ok = await self._probe_arm_ik(goal_handle, tf_pose)
+
+            if not ik_ok:
+                self.get_logger().warn(
+                    f'[PICK] IK probe failed at candidate {attempt_idx + 1}. '
+                    f'Trying next...'
+                )
+                ik_fail_count += 1
+                continue
+
+            # --- Phase 4d: Execute the validated plan ---
+            self.get_logger().info(
+                f'[PICK] IK probe succeeded at candidate {attempt_idx + 1}. '
+                f'Executing pick motion...'
+            )
+            self._current_status = 'Executing Pick Motion'
+            arm_success = await self._move_arm_to_pose(goal_handle, tf_pose)
+            break  # Done — exit search loop
+
+        # ----------------------------------------------------------------
+        # Check if we exhausted all candidates without success
+        # ----------------------------------------------------------------
+        if not arm_success:
+            if ik_fail_count >= self.pick_max_retries:
+                pass  # Already aborted inside the loop
+            else:
+                result.success = False
+                result.message = (
+                    'Pick failed: Exhausted all standoff candidates without '
+                    'successful arm motion'
+                )
+                goal_handle.abort()
+            return result
+
         if self._cancel_requested:
             result.success = False
-            result.message = 'Pick task canceled'
+            result.message = 'Pick task canceled after arm motion'
             goal_handle.canceled()
             return result
-        
-        # Phase 4: Make box dynamic (so it can be manipulated)
-        if box_name:
-            self._current_status = 'Preparing Object'
-            self.get_logger().info(f'Making {box_name} dynamic for manipulation...')
-            
-            dynamic_success, dynamic_msg = await self._call_set_box_state_service(box_name, make_dynamic=True)
-            
-            if not dynamic_success:
-                self.get_logger().warn(f'Failed to make box dynamic: {dynamic_msg}. Attempting attach anyway...')
-            else:
-                # Wait for physics simulation to update after making box dynamic
-                self.get_logger().info('Waiting for physics to stabilize...')
-                time.sleep(0.5)
-        
+
+        # ----------------------------------------------------------------
+        # Phase 5: Make box dynamic, then attach
+        # ----------------------------------------------------------------
+        self._current_status = 'Preparing Object'
+        self.get_logger().info(f'[PICK] Making "{box_name}" dynamic for manipulation...')
+
+        dynamic_success, dynamic_msg = await self._call_set_box_state_service(
+            box_name, make_dynamic=True
+        )
+
+        if not dynamic_success:
+            self.get_logger().warn(
+                f'[PICK] Failed to make box dynamic: {dynamic_msg}. '
+                f'Attempting attach anyway...'
+            )
+        else:
+            self.get_logger().info('[PICK] Waiting for physics to stabilize...')
+            time.sleep(3.0)
+
         if self._cancel_requested:
             result.success = False
             result.message = 'Pick task canceled before attach'
             goal_handle.canceled()
             return result
-        
-        # Phase 5: Attach object
+
         self._current_status = 'Grasping Object'
-        self.get_logger().info('Attaching object...')
-        
+        self.get_logger().info('[PICK] Attaching object...')
+
         attach_success, attach_msg, joint_name = await self._call_attach_service(box_name)
-        
+
         if not attach_success:
             result.success = False
-            result.message = f'Attach failed: {attach_msg}'
+            result.message = f'Pick attach failed: {attach_msg}'
             goal_handle.abort()
             return result
-        
+
         self._attached_object_joint = joint_name
-        self._attached_object_name = box_name  # Remember box name for static toggle on place
-        
+        self._attached_object_name = box_name  # Remember for static toggle on place
+
         if self._cancel_requested:
             result.success = False
             result.message = 'Pick task canceled after attach'
             goal_handle.canceled()
             return result
-        
-        # Phase 6: Return arm to ready position
+
+        # ----------------------------------------------------------------
+        # Phase 6: Return arm to ready, then home
+        # ----------------------------------------------------------------
         self._current_status = 'Returning to Ready'
-        self.get_logger().info('Returning arm to ready position...')
-        
+        self.get_logger().info('[PICK] Returning arm to ready position...')
+
         ready_return_success = await self._move_arm_to_named_position(goal_handle, 'ready')
-        
+
         if not ready_return_success:
-            self.get_logger().warn('Failed to return arm to ready position, attempting home directly...')
-        
+            self.get_logger().warn(
+                '[PICK] Failed to return arm to ready, attempting home directly...'
+            )
+
         if self._cancel_requested:
             result.success = False
-            result.message = 'Pick task canceled during return'
+            result.message = 'Pick task canceled during return to ready'
             goal_handle.canceled()
             return result
-        
-        # Phase 7: Return arm to home position
+
         self._current_status = 'Returning to Home'
-        self.get_logger().info('Returning arm to home position...')
-        
+        self.get_logger().info('[PICK] Returning arm to home position...')
+
         home_success = await self._move_arm_to_named_position(goal_handle, 'home')
-        
+
+        result.success = True
         if home_success:
-            result.success = True
             result.message = f'Pick completed and arm returned to home: {attach_msg}'
-            goal_handle.succeed()
         else:
-            # Pick was successful but return to home failed - still report success for the pick
-            self.get_logger().warn('Failed to return arm to home position, but pick was successful')
-            result.success = True
+            self.get_logger().warn('[PICK] Failed to return arm to home, but pick succeeded')
             result.message = f'Pick completed but failed to return to home: {attach_msg}'
-            goal_handle.succeed()
-        
+
+        goal_handle.succeed()
         return result
 
-    async def _execute_place(self, goal_handle, target_pose: PoseStamped) -> RobotTask.Result:
-        """Execute place task: move arm to target, detach object, make box static, then return to zero."""
-        result = RobotTask.Result()
+    # ------------------------------------------------------------------
+    # Place standoff search helpers
+    # ------------------------------------------------------------------
+
+    async def _get_costmap_snapshot(self):
+        """
+        Fetch the current global costmap as a nav2_msgs/Costmap snapshot.
+        Returns the Costmap message, or None on failure.
+        """
+        if not self._get_costmap_client.service_is_ready():
+            self.get_logger().warn('[PLACE] GetCostmap service not ready, skipping costmap filter')
+            return None
         
-        # Get the attached box name for making it static after detach
+        request = GetCostmap.Request()
+        future = self._get_costmap_client.call_async(request)
+        try:
+            response = await future
+            return response.map
+        except Exception as e:
+            self.get_logger().warn(f'[PLACE] GetCostmap call failed: {e}')
+            return None
+
+    def _costmap_cost_at(self, costmap_msg, map_x: float, map_y: float) -> int:
+        """
+        Look up the costmap cost at a given map-frame (x, y) position.
+        Returns cost as integer 0-255, or 255 (lethal) if out of bounds.
+        """
+        if costmap_msg is None:
+            return 0  # Assume free if we have no map
+        
+        meta = costmap_msg.metadata
+        res = meta.resolution
+        ox = meta.origin.position.x
+        oy = meta.origin.position.y
+        width = meta.size_x
+        height = meta.size_y
+        
+        cx = int((map_x - ox) / res)
+        cy = int((map_y - oy) / res)
+        
+        if cx < 0 or cy < 0 or cx >= width or cy >= height:
+            return 255  # Out of bounds → treat as lethal
+        
+        idx = cy * width + cx
+        return costmap_msg.data[idx]
+
+    def _generate_standoff_candidates(self, target_x: float, target_y: float) -> list:
+        """
+        Generate candidate base positions on a ring around (target_x, target_y).
+        Returns a list of (x, y, yaw) tuples where yaw faces the target.
+        Samples every place_angle_step degrees for each radius step.
+        """
+        candidates = []
+        # Sample two radius rings: inner and outer
+        radius_steps = [self.pick_radius_min, self.pick_radius_max]
+        angle_step_rad = math.radians(self.place_angle_step)
+        num_steps = int(round(360.0 / self.place_angle_step))
+        
+        for r in radius_steps:
+            for i in range(num_steps):
+                theta = i * angle_step_rad
+                cx = target_x + r * math.cos(theta)
+                cy = target_y + r * math.sin(theta)
+                # Robot should face the target
+                yaw = math.atan2(target_y - cy, target_x - cx)
+                candidates.append((cx, cy, yaw))
+        
+        return candidates
+
+    async def _execute_place(self, goal_handle, target_pose: PoseStamped) -> RobotTask.Result:
+        """
+        Atomic Place Action with Dynamic Reachability Search.
+
+        Algorithm:
+          Phase 0: Generate candidate standoff base poses around the target.
+          Phase 1: Filter candidates by global costmap (reject lethal cells).
+          Phase 2: Rank by distance to current robot position.
+          Phase 3: Iterate through candidates:
+            a. Navigate to candidate base pose (Nav2).
+            b. Transform target to planning frame.
+            c. Probe MoveIt (plan only) — if fail, try next candidate.
+            d. Execute the validated plan.
+          Phase 4: Detach object, make box static, return arm to home.
+
+        After place_max_retries IK failures, abort with "Target Unreachable".
+        """
+        result = RobotTask.Result()
         attached_box_name = self._attached_object_name
         
-        # Phase 1: Plan and execute arm motion to place position
-        self._current_status = 'Planning Arm Path'
-        self.get_logger().info('Planning arm motion for place...')
+        # ----------------------------------------------------------------
+        # Phase 0: Generate standoff candidates
+        # ----------------------------------------------------------------
+        target_x = target_pose.pose.position.x
+        target_y = target_pose.pose.position.y
+        target_z = target_pose.pose.position.z  # preserve Z for arm goal
         
-        arm_success = await self._move_arm_to_pose(goal_handle, target_pose)
+        self._current_status = 'Searching Standoff Poses'
+        self.get_logger().info(
+            f'[PLACE] Generating standoff candidates around '
+            f'({target_x:.2f}, {target_y:.2f})'
+        )
         
-        if not arm_success:
+        candidates = self._generate_standoff_candidates(target_x, target_y)
+        self.get_logger().info(f'[PLACE] Generated {len(candidates)} raw candidates')
+        
+        # ----------------------------------------------------------------
+        # Phase 1: Filter by costmap
+        # ----------------------------------------------------------------
+        costmap_msg = await self._get_costmap_snapshot()
+        
+        valid_candidates = []
+        for (cx, cy, cyaw) in candidates:
+            cost = self._costmap_cost_at(costmap_msg, cx, cy)
+            if cost < self.costmap_lethal_threshold:
+                valid_candidates.append((cx, cy, cyaw))
+            else:
+                self.get_logger().debug(
+                    f'[PLACE] Candidate ({cx:.2f}, {cy:.2f}) rejected: cost={cost}'
+                )
+        
+        self.get_logger().info(
+            f'[PLACE] {len(valid_candidates)} candidates after costmap filter '
+            f'(lethal threshold={self.costmap_lethal_threshold})'
+        )
+        
+        if not valid_candidates:
             result.success = False
-            result.message = 'Failed to move arm to place position'
+            result.message = 'Place failed: No obstacle-free standoff positions found around target'
             goal_handle.abort()
             return result
         
+        # ----------------------------------------------------------------
+        # Phase 2: Rank by distance to current robot position
+        # ----------------------------------------------------------------
+        with self._pose_lock:
+            base_pose = self._current_base_pose
+        
+        if base_pose is not None:
+            robot_x = base_pose.position.x
+            robot_y = base_pose.position.y
+            valid_candidates.sort(
+                key=lambda c: (c[0] - robot_x) ** 2 + (c[1] - robot_y) ** 2
+            )
+            self.get_logger().info(
+                f'[PLACE] Candidates ranked by distance from robot '
+                f'({robot_x:.2f}, {robot_y:.2f})'
+            )
+        
+        # ----------------------------------------------------------------
+        # Phase 3: Iterate candidates — navigate → IK probe → execute
+        # ----------------------------------------------------------------
+        ik_fail_count = 0
+        arm_success = False
+        validated_transformed_pose = None
+        
+        for attempt_idx, (cx, cy, cyaw) in enumerate(valid_candidates):
+            if self._cancel_requested:
+                result.success = False
+                result.message = 'Place task canceled during standoff search'
+                goal_handle.canceled()
+                return result
+            
+            if ik_fail_count >= self.place_max_retries:
+                self.get_logger().error(
+                    f'[PLACE] Aborted: IK failed at {ik_fail_count} candidates '
+                    f'(max_retries={self.place_max_retries})'
+                )
+                result.success = False
+                result.message = (
+                    f'Place aborted: Target unreachable after '
+                    f'{ik_fail_count} IK-probe failures'
+                )
+                goal_handle.abort()
+                return result
+            
+            # Build a yaw → quaternion for the base goal pose
+            # q = [0, 0, sin(yaw/2), cos(yaw/2)]
+            qz = math.sin(cyaw / 2.0)
+            qw = math.cos(cyaw / 2.0)
+            
+            standoff_pose = PoseStamped()
+            standoff_pose.header.frame_id = 'map'
+            standoff_pose.header.stamp = self.get_clock().now().to_msg()
+            standoff_pose.pose.position.x = cx
+            standoff_pose.pose.position.y = cy
+            standoff_pose.pose.position.z = 0.0
+            standoff_pose.pose.orientation.x = 0.0
+            standoff_pose.pose.orientation.y = 0.0
+            standoff_pose.pose.orientation.z = qz
+            standoff_pose.pose.orientation.w = qw
+            
+            self.get_logger().info(
+                f'[PLACE] Candidate {attempt_idx + 1}/{len(valid_candidates)}: '
+                f'navigating to ({cx:.2f}, {cy:.2f}, yaw={math.degrees(cyaw):.0f}°)'
+            )
+            
+            # --- Phase 3a: Navigate to standoff pose (sub-step, don't terminate goal handle) ---
+            self._current_status = 'Navigating to Standoff'
+            nav_result = await self._execute_navigate(goal_handle, standoff_pose, is_subtask=True)
+            
+            if not nav_result.success:
+                # Navigation failure (e.g. blocked path) — try next candidate
+                self.get_logger().warn(
+                    f'[PLACE] Navigation to candidate {attempt_idx + 1} failed: '
+                    f'{nav_result.message}. Trying next...'
+                )
+                # Reset goal handle state for continued iteration
+                # (navigate already called abort/cancel; we need a fresh goal handle check)
+                if self._cancel_requested:
+                    result.success = False
+                    result.message = 'Place task canceled during navigation to standoff'
+                    return result
+                ik_fail_count += 1
+                continue
+            
+            if self._cancel_requested:
+                result.success = False
+                result.message = 'Place task canceled after navigation to standoff'
+                goal_handle.canceled()
+                return result
+            
+            # --- Phase 3b: Transform target to planning frame ---
+            self._current_status = 'Transforming Pose'
+            
+            # Rebuild target pose with correct Z preserved
+            place_target_map = PoseStamped()
+            place_target_map.header.frame_id = target_pose.header.frame_id or 'map'
+            place_target_map.header.stamp = self.get_clock().now().to_msg()
+            place_target_map.pose.position.x = target_x
+            place_target_map.pose.position.y = target_y
+            place_target_map.pose.position.z = target_z
+            place_target_map.pose.orientation.w = 1.0
+            
+            transformed_pose = self._transform_pose_to_planning_frame(place_target_map)
+            
+            if transformed_pose is None:
+                self.get_logger().warn(
+                    f'[PLACE] Cannot transform target to planning frame at candidate '
+                    f'{attempt_idx + 1}. Trying next...'
+                )
+                ik_fail_count += 1
+                continue
+            
+            # Fix orientation: gripper pointing down
+            transformed_pose.pose.orientation.x = 0.0
+            transformed_pose.pose.orientation.y = 0.707
+            transformed_pose.pose.orientation.z = 0.0
+            transformed_pose.pose.orientation.w = 0.707
+            
+            self.get_logger().info(
+                f'[PLACE] Target in {self.planning_frame}: '
+                f'({transformed_pose.pose.position.x:.3f}, '
+                f'{transformed_pose.pose.position.y:.3f}, '
+                f'{transformed_pose.pose.position.z:.3f}) orientation=gripper-down'
+            )
+            
+            # --- Phase 3c: MoveIt IK probe (plan only) ---
+            self._current_status = 'IK Probe'
+            self.get_logger().info(
+                f'[PLACE] Running MoveIt IK probe for candidate {attempt_idx + 1}...'
+            )
+            
+            ik_ok = await self._probe_arm_ik(goal_handle, transformed_pose)
+            
+            if not ik_ok:
+                self.get_logger().warn(
+                    f'[PLACE] IK probe failed at candidate {attempt_idx + 1}. '
+                    f'Marking invalid and trying next...'
+                )
+                ik_fail_count += 1
+                continue
+            
+            # --- Phase 3d: Execute the validated plan ---
+            self.get_logger().info(
+                f'[PLACE] IK probe succeeded at candidate {attempt_idx + 1}. '
+                f'Executing place motion...'
+            )
+            self._current_status = 'Executing Place Motion'
+            arm_success = await self._move_arm_to_pose(goal_handle, transformed_pose)
+            validated_transformed_pose = transformed_pose
+            break  # Done — exit the search loop
+        
+        # ----------------------------------------------------------------
+        # Check if we exhausted all candidates without success
+        # ----------------------------------------------------------------
+        if not arm_success:
+            if ik_fail_count >= self.place_max_retries:
+                # Already aborted inside the loop
+                pass
+            else:
+                result.success = False
+                result.message = (
+                    'Place failed: Exhausted all standoff candidates without '
+                    'successful arm motion'
+                )
+                goal_handle.abort()
+            return result
+        
         if self._cancel_requested:
             result.success = False
-            result.message = 'Place task canceled'
+            result.message = 'Place task canceled after arm motion'
             goal_handle.canceled()
             return result
         
-        # Phase 2: Detach object
+        # ----------------------------------------------------------------
+        # Phase 4: Detach object
+        # ----------------------------------------------------------------
         self._current_status = 'Releasing Object'
-        self.get_logger().info('Detaching object...')
+        self.get_logger().info('[PLACE] Detaching object...')
         
         if self._attached_object_joint:
             detach_success, detach_msg = await self._call_detach_service(self._attached_object_joint)
@@ -609,17 +1309,21 @@ class MobManTaskActionServer(Node):
             goal_handle.abort()
             return result
         
-        # Phase 3: Make box static (freeze in place)
+        # Phase 5: Make box static (freeze in place)
         if attached_box_name:
             self._current_status = 'Freezing Object'
-            self.get_logger().info(f'Making {attached_box_name} static (freezing in place)...')
+            self.get_logger().info(f'[PLACE] Making {attached_box_name} static...')
             
-            static_success, static_msg = await self._call_set_box_state_service(attached_box_name, make_dynamic=False)
+            static_success, static_msg = await self._call_set_box_state_service(
+                attached_box_name, make_dynamic=False
+            )
             
             if not static_success:
-                self.get_logger().warn(f'Failed to make box static: {static_msg}. Continuing anyway...')
+                self.get_logger().warn(
+                    f'[PLACE] Failed to make box static: {static_msg}. Continuing...'
+                )
             
-            self._attached_object_name = None  # Clear the tracked name
+            self._attached_object_name = None
         
         if self._cancel_requested:
             result.success = False
@@ -627,24 +1331,105 @@ class MobManTaskActionServer(Node):
             goal_handle.canceled()
             return result
         
-        # Phase 4: Return arm to zero position (same as home - all joints at 0)
-        self._current_status = 'Returning to Zero'
-        self.get_logger().info('Returning arm to zero position...')
+        # Phase 6: Return arm to home
+        self._current_status = 'Returning to Home'
+        self.get_logger().info('[PLACE] Returning arm to home position...')
         
-        zero_success = await self._move_arm_to_named_position(goal_handle, 'home')  # 'home' in SRDF is all zeros
+        zero_success = await self._move_arm_to_named_position(goal_handle, 'home')
         
         if zero_success:
             result.success = True
-            result.message = f'Place completed and arm returned to zero: {detach_msg}'
+            result.message = f'Place completed and arm returned to home: {detach_msg}'
             goal_handle.succeed()
         else:
-            # Place was successful but return to zero failed - still report success for the place
-            self.get_logger().warn('Failed to return arm to zero position, but place was successful')
+            self.get_logger().warn('[PLACE] Failed to return arm to home, but place was successful')
             result.success = True
-            result.message = f'Place completed but failed to return to zero: {detach_msg}'
+            result.message = f'Place completed but failed to return to home: {detach_msg}'
             goal_handle.succeed()
         
         return result
+
+    async def _probe_arm_ik(self, goal_handle, target_pose: PoseStamped) -> bool:
+        """
+        Send a plan-only MoveIt goal to validate IK reachability at the current
+        robot base position WITHOUT executing any trajectory.
+
+        Returns True if MoveIt found a valid plan, False otherwise.
+        """
+        moveit_goal = MoveGroup.Goal()
+        moveit_goal.request.group_name = self.planning_group
+        moveit_goal.request.num_planning_attempts = 5
+        moveit_goal.request.allowed_planning_time = self.planning_time
+        moveit_goal.request.max_velocity_scaling_factor = 0.3
+        moveit_goal.request.max_acceleration_scaling_factor = 0.3
+
+        # Workspace bounds
+        moveit_goal.request.workspace_parameters.header.frame_id = self.planning_frame
+        moveit_goal.request.workspace_parameters.header.stamp = self.get_clock().now().to_msg()
+        moveit_goal.request.workspace_parameters.min_corner.x = -3.0
+        moveit_goal.request.workspace_parameters.min_corner.y = -3.0
+        moveit_goal.request.workspace_parameters.min_corner.z = -1.0
+        moveit_goal.request.workspace_parameters.max_corner.x = 3.0
+        moveit_goal.request.workspace_parameters.max_corner.y = 3.0
+        moveit_goal.request.workspace_parameters.max_corner.z = 3.0
+
+        # Pose constraint
+        constraints = Constraints()
+        constraints.name = 'ik_probe_goal'
+
+        position_constraint = PositionConstraint()
+        position_constraint.header.frame_id = self.planning_frame
+        position_constraint.header.stamp = self.get_clock().now().to_msg()
+        position_constraint.link_name = self.ee_link
+        bounding_volume = BoundingVolume()
+        primitive = SolidPrimitive()
+        primitive.type = SolidPrimitive.SPHERE
+        primitive.dimensions = [0.01]
+        bounding_volume.primitives.append(primitive)
+        bounding_volume.primitive_poses.append(target_pose.pose)
+        position_constraint.constraint_region = bounding_volume
+        position_constraint.weight = 1.0
+        constraints.position_constraints.append(position_constraint)
+
+        orientation_constraint = OrientationConstraint()
+        orientation_constraint.header.frame_id = self.planning_frame
+        orientation_constraint.header.stamp = self.get_clock().now().to_msg()
+        orientation_constraint.link_name = self.ee_link
+        orientation_constraint.orientation = target_pose.pose.orientation
+        orientation_constraint.absolute_x_axis_tolerance = 0.1
+        orientation_constraint.absolute_y_axis_tolerance = 0.1
+        orientation_constraint.absolute_z_axis_tolerance = 0.1
+        orientation_constraint.weight = 1.0
+        constraints.orientation_constraints.append(orientation_constraint)
+
+        moveit_goal.request.goal_constraints.append(constraints)
+        # KEY: plan only — do NOT execute the trajectory
+        moveit_goal.planning_options.plan_only = True
+        moveit_goal.planning_options.replan = False
+        moveit_goal.planning_options.replan_attempts = 0
+
+        send_goal_future = self._moveit_client.send_goal_async(moveit_goal)
+        probe_handle = await send_goal_future
+
+        if not probe_handle.accepted:
+            self.get_logger().warn('[PLACE] IK probe goal rejected by MoveIt')
+            return False
+
+        result_future = probe_handle.get_result_async()
+        feedback_period = 1.0 / self.feedback_rate
+
+        while not result_future.done():
+            if self._cancel_requested:
+                probe_handle.cancel_goal_async()
+                return False
+            # Publish lightweight feedback so the action client stays warm
+            feedback = RobotTask.Feedback()
+            feedback.current_status = 'IK Probe'
+            goal_handle.publish_feedback(feedback)
+            time.sleep(feedback_period)
+
+        probe_result = result_future.result()
+        return probe_result.status == GoalStatus.STATUS_SUCCEEDED
 
     async def _move_arm_to_pose(self, goal_handle, target_pose: PoseStamped) -> bool:
         """Move arm to target pose using MoveIt."""
@@ -878,11 +1663,11 @@ class MobManTaskActionServer(Node):
         Args:
             box_name: Name of the box to attach (e.g., 'aruco_box_0')
         """
-        if not self._attach_client.wait_for_service(timeout_sec=2.0):
+        if not self._attach_client.wait_for_service(timeout_sec=5.0):
             return False, 'Attach service not available', None
         
         request = AttachObject.Request()
-        request.parent_model = 'mobman'
+        request.parent_model = self.robot_namespace
         request.parent_link = 'arm_link6_1'
         request.child_model = box_name
         request.child_link = 'link'
@@ -897,7 +1682,7 @@ class MobManTaskActionServer(Node):
 
     async def _call_detach_service(self, joint_name: str):
         """Call detach_object service."""
-        if not self._detach_client.wait_for_service(timeout_sec=2.0):
+        if not self._detach_client.wait_for_service(timeout_sec=5.0):
             return False, 'Detach service not available'
         
         request = DetachObject.Request()
@@ -922,7 +1707,7 @@ class MobManTaskActionServer(Node):
         Returns:
             Tuple of (success, message)
         """
-        if not self._set_box_state_client.wait_for_service(timeout_sec=2.0):
+        if not self._set_box_state_client.wait_for_service(timeout_sec=5.0):
             return False, 'SetBoxState service not available'
         
         state_str = 'dynamic' if make_dynamic else 'static'

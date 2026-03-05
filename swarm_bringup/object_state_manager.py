@@ -603,18 +603,20 @@ class ObjectStateManager(Node):
             <inertial>
                 <mass>0.5</mass>
                 <inertia>
-                    <ixx>0.006667</ixx>
-                    <iyy>0.006667</iyy>
-                    <izz>0.006667</izz>
+                    <ixx>0.003333</ixx>
+                    <iyy>0.005417</iyy>
+                    <izz>0.005417</izz>
                     <ixy>0</ixy>
                     <ixz>0</ixz>
                     <iyz>0</iyz>
                 </inertia>
             </inertial>
+      
+            <!-- Collision geometry -->
             <collision name="collision">
                 <geometry>
                     <box>
-                        <size>0.2 0.2 0.2</size>
+                        <size>0.3 0.2 0.2</size>
                     </box>
                 </geometry>
                 <surface>
@@ -632,8 +634,10 @@ class ObjectStateManager(Node):
                     </contact>
                 </surface>
             </collision>
+      
+            <!-- Visual geometry - Front face with ArUco tag -->
             <visual name="visual_front">
-                <pose>0.1 0 0 0 0 0</pose>
+                <pose>0.15 0 0 0 0 0</pose>
                 <geometry>
                     <box>
                         <size>0.001 0.2 0.2</size>
@@ -650,8 +654,10 @@ class ObjectStateManager(Node):
                     </pbr>
                 </material>
             </visual>
+      
+            <!-- Visual geometry - Back face (brick color) -->
             <visual name="visual_back">
-                <pose>-0.1 0 0 0 0 0</pose>
+                <pose>-0.15 0 0 0 0 0</pose>
                 <geometry>
                     <box>
                         <size>0.001 0.2 0.2</size>
@@ -663,11 +669,13 @@ class ObjectStateManager(Node):
                     <specular>0.1 0.05 0.05 1</specular>
                 </material>
             </visual>
+      
+            <!-- Visual geometry - Left face (brick color) -->
             <visual name="visual_left">
                 <pose>0 0.1 0 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.2 0.001 0.2</size>
+                        <size>0.3 0.001 0.2</size>
                     </box>
                 </geometry>
                 <material>
@@ -676,11 +684,13 @@ class ObjectStateManager(Node):
                     <specular>0.1 0.05 0.05 1</specular>
                 </material>
             </visual>
+      
+            <!-- Visual geometry - Right face (brick color) -->
             <visual name="visual_right">
                 <pose>0 -0.1 0 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.2 0.001 0.2</size>
+                        <size>0.3 0.001 0.2</size>
                     </box>
                 </geometry>
                 <material>
@@ -689,11 +699,13 @@ class ObjectStateManager(Node):
                     <specular>0.1 0.05 0.05 1</specular>
                 </material>
             </visual>
+      
+            <!-- Visual geometry - Top face (brick color) -->
             <visual name="visual_top">
                 <pose>0 0 0.1 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.2 0.2 0.001</size>
+                        <size>0.3 0.2 0.001</size>
                     </box>
                 </geometry>
                 <material>
@@ -702,11 +714,13 @@ class ObjectStateManager(Node):
                     <specular>0.1 0.05 0.05 1</specular>
                 </material>
             </visual>
+      
+            <!-- Visual geometry - Bottom face (brick color) -->
             <visual name="visual_bottom">
                 <pose>0 0 -0.1 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.2 0.2 0.001</size>
+                        <size>0.3 0.2 0.001</size>
                     </box>
                 </geometry>
                 <material>

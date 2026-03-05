@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-Launch file for CHARS Central Allocator and all robot task action servers.
+Launch file for CHARS Central Allocator.
 
-This comprehensive launch file starts the complete CHARS allocation system:
-1. chars_central_allocator - The master node for task allocation
-2. jackal_nav_action_server - Jackal navigation action server
-3. ur5_task_action_server - UR5 pick/place action server
-4. mobman_task_action_server - Mobile Manipulator full-stack action server
-5. simple_gripper_service - Gripper attach/detach service
+Starts the central allocator node with configurable agent mode.
+
+Agent modes:
+    - 'mobman' (default): Homogeneous fleet of mobile manipulators.
+      Agent action servers are launched separately via agent_bringup.launch.py.
+    - 'mixed': Heterogeneous fleet (Jackal + UR5 + MobMan).
 
 Usage:
+    # Homogeneous (default):
     ros2 launch swarm_bringup chars_central_allocator.launch.py
+
+    # Heterogeneous:
+    ros2 launch swarm_bringup chars_central_allocator.launch.py agent_type:=mixed
 """
 
 from launch import LaunchDescription
@@ -53,6 +57,18 @@ def generate_launch_description():
         description='Reachability weight'
     )
     
+    declare_agent_type = DeclareLaunchArgument(
+        'agent_type', default_value='mobman',
+        description="Agent mode: 'mobman' (homogeneous) or 'mixed' (heterogeneous)"
+    )
+    
+    declare_agent_namespaces = DeclareLaunchArgument(
+        'agent_namespaces',
+        default_value="['agent1', 'agent2']",
+        #default_value="['agent1']",
+        description="List of agent namespaces (only used when agent_type='mobman')"
+    )
+    
     # ===================== CHARS Central Allocator =====================
     chars_allocator = Node(
         package='swarm_bringup',
@@ -66,55 +82,9 @@ def generate_launch_description():
             'w_time': LaunchConfiguration('w_time'),
             'w_energy': LaunchConfiguration('w_energy'),
             'w_reach': LaunchConfiguration('w_reach'),
+            'agent_type': LaunchConfiguration('agent_type'),
+            'agent_namespaces': LaunchConfiguration('agent_namespaces'),
         }],
-    )
-    
-    # ===================== Jackal Nav Action Server =====================
-    jackal_action_server = Node(
-        package='swarm_bringup',
-        executable='jackal_nav_action_server',
-        name='jackal_nav_action_server',
-        output='screen',
-        parameters=[{
-            'robot_namespace': 'jackal',
-            'feedback_rate': 2.0,
-        }],
-    )
-    
-    # ===================== UR5 Task Action Server =====================
-    ur5_action_server = Node(
-        package='swarm_bringup',
-        executable='ur5_task_action_server',
-        name='ur5_task_action_server',
-        output='screen',
-        parameters=[{
-            'robot_namespace': 'ur5',
-            'planning_group': 'arm',
-            'end_effector_link': 'ur5/link6_1',
-            'feedback_rate': 2.0,
-        }],
-    )
-    
-    # ===================== MobMan Task Action Server =====================
-    mobman_action_server = Node(
-        package='swarm_bringup',
-        executable='mobman_task_action_server',
-        name='mobman_task_action_server',
-        output='screen',
-        parameters=[{
-            'robot_namespace': 'mobman',
-            'planning_group': 'arm',
-            'end_effector_link': 'mobman/arm_link6_1',
-            'feedback_rate': 2.0,
-        }],
-    )
-    
-    # ===================== Gripper Service =====================
-    gripper_service = Node(
-        package='swarm_bringup',
-        executable='simple_gripper_service',
-        name='simple_gripper_service',
-        output='screen',
     )
     
     return LaunchDescription([
@@ -125,10 +95,8 @@ def generate_launch_description():
         declare_w_time,
         declare_w_energy,
         declare_w_reach,
+        declare_agent_type,
+        declare_agent_namespaces,
         # Nodes
         chars_allocator,
-        jackal_action_server,
-        ur5_action_server,
-        mobman_action_server,
-        gripper_service,
     ])

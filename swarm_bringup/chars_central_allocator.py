@@ -15,12 +15,24 @@ Where:
     - S_energy: Energy score = (1 - e^(-β / M_f)) × (B_curr / 100)
     - S_reach: Reachability score = e^(-γ × δ)
 
+Agent Modes:
+    - 'mobman' (default): Homogeneous fleet of N mobile manipulators.
+      Agent namespaces are set via the 'agent_namespaces' parameter.
+    - 'mixed': Heterogeneous fleet (Jackal + UR5 + MobMan) with
+      hardcoded capabilities and special-case scoring.
+
+Task Input:
+    - Single tasks via /chars/task_request (PoseStamped with 'type:frame' encoding)
+    - Full task DAG via /chars/task_dag (JSON String with dependencies)
+
 Features:
+    - DAG-aware scheduling: dispatches all dependency-met tasks in parallel
     - Multi-threaded executor for concurrent robot feedback
-    - Action clients for Jackal, UR5, and MobMan
+    - Configurable homogeneous or heterogeneous agent fleet
     - Utility Matrix calculation with hard filters
     - Availability tracking with A vector
     - Failure recovery with global recalculation
+    - Live DAG status published on /chars/dag_status
 
 Usage:
     ros2 run swarm_bringup chars_central_allocator
@@ -37,12 +49,13 @@ from geometry_msgs.msg import PoseStamped, Pose
 from std_msgs.msg import String
 
 from swarm_interfaces.action import RobotTask
-from nav2_msgs.srv import ComputePathToPose
+from nav2_msgs.action import ComputePathToPose
 
 from tf2_ros import Buffer, TransformListener
 
 import numpy as np
 import math
+import json
 import threading
 from enum import Enum
 from dataclasses import dataclass, field
@@ -114,6 +127,8 @@ class CHARSCentralAllocator(Node):
         self.declare_parameter('w_reach', 0.4)    # Reachability weight
         self.declare_parameter('ur5_nav_distance', 1000.0)  # High D for UR5 nav tasks
         self.declare_parameter('allocation_rate', 1.0)  # Hz
+        self.declare_parameter('agent_type', 'mobman')  # 'mobman' or 'mixed'
+        self.declare_parameter('agent_namespaces', ['agent1', 'agent2', 'agent3'])
         
         self.alpha = self.get_parameter('alpha').value
         self.beta = self.get_parameter('beta').value
@@ -123,35 +138,14 @@ class CHARSCentralAllocator(Node):
         self.w_reach = self.get_parameter('w_reach').value
         self.ur5_nav_distance = self.get_parameter('ur5_nav_distance').value
         self.allocation_rate = self.get_parameter('allocation_rate').value
+        self.agent_type = self.get_parameter('agent_type').value
+        self.agent_namespaces = self.get_parameter('agent_namespaces').value
         
         # ===================== Agent Registry =====================
-        self.agents: Dict[str, Agent] = {
-            'jackal': Agent(
-                name='jackal',
-                namespace='jackal',
-                mass_factor=1.0,
-                capabilities=['navigate']
-            ),
-            'ur5': Agent(
-                name='ur5',
-                namespace='ur5',
-                mass_factor=1.0,  # Not applicable for stationary
-                capabilities=['pick', 'place']
-            ),
-            'mobman': Agent(
-                name='mobman',
-                namespace='mobman',
-                mass_factor=1.8,
-                capabilities=['navigate', 'pick', 'place']
-            ),
-        }
+        self.agents: Dict[str, Agent] = self._build_agent_registry()
         
         # Compatibility Matrix Φ (task_type -> agent -> compatible)
-        self.compatibility_matrix = {
-            'navigate': {'jackal': 1, 'ur5': 0, 'mobman': 1},
-            'pick':     {'jackal': 0, 'ur5': 1, 'mobman': 1},
-            'place':    {'jackal': 0, 'ur5': 1, 'mobman': 1},
-        }
+        self.compatibility_matrix = self._build_compatibility_matrix()
         
         # ===================== Task Queue =====================
         self.task_queue: List[Task] = []
@@ -172,25 +166,38 @@ class CHARSCentralAllocator(Node):
                 callback_group=self.callback_group
             )
         
-        # ===================== Service Clients for Path Computation =====================
-        self.path_clients: Dict[str, object] = {}
-        for agent_name in ['jackal', 'mobman']:
-            service_name = f'/{agent_name}/compute_path_to_pose'
-            self.path_clients[agent_name] = self.create_client(
-                ComputePathToPose,
-                service_name,
-                callback_group=self.callback_group
-            )
+        # ===================== Path Computation Action Clients =====================
+        self.path_clients: Dict[str, ActionClient] = {}
+        for agent_name, agent in self.agents.items():
+            if 'navigate' in agent.capabilities:
+                action_name = f'/{agent.namespace}/compute_path_to_pose'
+                self.path_clients[agent_name] = ActionClient(
+                    self,
+                    ComputePathToPose,
+                    action_name,
+                    callback_group=self.callback_group
+                )
         
         # ===================== Publishers/Subscribers =====================
         self.status_pub = self.create_publisher(
             String, '/chars/allocator_status', 10
         )
         
+        self.dag_status_pub = self.create_publisher(
+            String, '/chars/dag_status', 10
+        )
+        
         # Task input subscriber (from PDDL planner or manual input)
         self.task_sub = self.create_subscription(
             PoseStamped, '/chars/task_request',
             self._task_request_callback, 10,
+            callback_group=self.callback_group
+        )
+        
+        # DAG input subscriber (JSON task graph)
+        self.dag_sub = self.create_subscription(
+            String, '/chars/task_dag',
+            self._dag_callback, 10,
             callback_group=self.callback_group
         )
         
@@ -205,6 +212,7 @@ class CHARSCentralAllocator(Node):
         self._publish_status('CHARS Central Allocator Started')
         self.get_logger().info('=' * 70)
         self.get_logger().info('CHARS Central Allocator v2.0 Started')
+        self.get_logger().info(f'  Agent Type: {self.agent_type}')
         self.get_logger().info('  Registered Agents: ' + ', '.join(self.agents.keys()))
         self.get_logger().info(f'  Weights: w_time={self.w_time}, w_energy={self.w_energy}, w_reach={self.w_reach}')
         self.get_logger().info(f'  Decay factors: α={self.alpha}, β={self.beta}, γ={self.gamma}')
@@ -212,6 +220,52 @@ class CHARSCentralAllocator(Node):
         
         # Check action server availability
         self._check_agent_connections()
+
+    def _build_agent_registry(self) -> Dict[str, Agent]:
+        """Build agent registry based on agent_type parameter."""
+        if self.agent_type == 'mixed':
+            # Heterogeneous: original Jackal + UR5 + MobMan
+            return {
+                'jackal': Agent(
+                    name='jackal',
+                    namespace='jackal',
+                    mass_factor=1.0,
+                    capabilities=['navigate']
+                ),
+                'ur5': Agent(
+                    name='ur5',
+                    namespace='ur5',
+                    mass_factor=1.0,
+                    capabilities=['pick', 'place']
+                ),
+                'mobman': Agent(
+                    name='mobman',
+                    namespace='mobman',
+                    mass_factor=1.8,
+                    capabilities=['navigate', 'pick', 'place']
+                ),
+            }
+        else:
+            # Homogeneous: N mobile manipulators
+            agents = {}
+            for ns in self.agent_namespaces:
+                agents[ns] = Agent(
+                    name=ns,
+                    namespace=ns,
+                    mass_factor=1.8,
+                    capabilities=['navigate', 'pick', 'place']
+                )
+            return agents
+
+    def _build_compatibility_matrix(self) -> Dict[str, Dict[str, int]]:
+        """Build compatibility matrix Φ based on agent capabilities."""
+        task_types = ['navigate', 'pick', 'place']
+        matrix = {}
+        for task_type in task_types:
+            matrix[task_type] = {}
+            for agent_name, agent in self.agents.items():
+                matrix[task_type][agent_name] = 1 if task_type in agent.capabilities else 0
+        return matrix
 
     def _check_agent_connections(self):
         """Check if all agent action servers are available."""
@@ -227,7 +281,7 @@ class CHARSCentralAllocator(Node):
         self.status_pub.publish(msg)
 
     def _task_request_callback(self, msg: PoseStamped):
-        """Handle incoming task requests."""
+        """Handle incoming single task requests (legacy interface)."""
         # Parse task type from frame_id (e.g., "navigate:map" or "pick:aruco_box_0")
         frame_parts = msg.header.frame_id.split(':')
         task_type = frame_parts[0] if frame_parts else 'navigate'
@@ -245,6 +299,94 @@ class CHARSCentralAllocator(Node):
             self.task_queue.append(task)
         
         self.get_logger().info(f'Queued task: {task.task_id} ({task.task_type})')
+
+    def _dag_callback(self, msg: String):
+        """
+        Handle incoming task DAG (Directed Acyclic Graph).
+        
+        Expected JSON format:
+        {
+          "tasks": [
+            {
+              "task_id": "nav_to_table",
+              "task_type": "navigate",
+              "frame_id": "map",
+              "pose": {"x": 1.5, "y": 2.0, "z": 0.0,
+                       "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0},
+              "dependencies": []
+            },
+            {
+              "task_id": "pick_box",
+              "task_type": "pick",
+              "frame_id": "aruco_box_0",
+              "pose": {},
+              "dependencies": ["nav_to_table"]
+            }
+          ]
+        }
+        """
+        try:
+            dag_data = json.loads(msg.data)
+        except json.JSONDecodeError as e:
+            self.get_logger().error(f'Failed to parse DAG JSON: {e}')
+            return
+        
+        tasks_data = dag_data.get('tasks', [])
+        if not tasks_data:
+            self.get_logger().warn('Received empty DAG')
+            return
+        
+        # Validate: check for duplicate task IDs
+        task_ids = [t.get('task_id', '') for t in tasks_data]
+        if len(task_ids) != len(set(task_ids)):
+            self.get_logger().error('DAG contains duplicate task IDs')
+            return
+        
+        # Validate: check that all dependency references exist
+        task_id_set = set(task_ids)
+        for t_data in tasks_data:
+            for dep in t_data.get('dependencies', []):
+                if dep not in task_id_set:
+                    self.get_logger().error(
+                        f'DAG error: task "{t_data.get("task_id")}" depends on '
+                        f'unknown task "{dep}"'
+                    )
+                    return
+        
+        # Clear existing task queue and load the DAG
+        with self.task_lock:
+            self.task_queue.clear()
+            
+            for t_data in tasks_data:
+                pose_data = t_data.get('pose', {})
+                
+                target_pose = PoseStamped()
+                target_pose.header.frame_id = t_data.get('frame_id', 'map')
+                target_pose.pose.position.x = float(pose_data.get('x', 0.0))
+                target_pose.pose.position.y = float(pose_data.get('y', 0.0))
+                target_pose.pose.position.z = float(pose_data.get('z', 0.0))
+                target_pose.pose.orientation.x = float(pose_data.get('qx', 0.0))
+                target_pose.pose.orientation.y = float(pose_data.get('qy', 0.0))
+                target_pose.pose.orientation.z = float(pose_data.get('qz', 0.0))
+                target_pose.pose.orientation.w = float(pose_data.get('qw', 1.0))
+                
+                task = Task(
+                    task_id=t_data['task_id'],
+                    task_type=t_data.get('task_type', 'navigate'),
+                    target_pose=target_pose,
+                    dependencies=t_data.get('dependencies', [])
+                )
+                
+                self.task_queue.append(task)
+        
+        self.get_logger().info(f'Loaded DAG with {len(self.task_queue)} tasks')
+        for task in self.task_queue:
+            deps_str = ', '.join(task.dependencies) if task.dependencies else 'none'
+            self.get_logger().info(
+                f'  {task.task_id} ({task.task_type}) deps=[{deps_str}]'
+            )
+        
+        self._publish_dag_status()
 
     def add_task(self, task_type: str, target_pose: PoseStamped, 
                  priority: int = 0, dependencies: List[str] = None):
@@ -264,49 +406,61 @@ class CHARSCentralAllocator(Node):
         return task.task_id
 
     def _allocation_loop(self):
-        """Main allocation loop - runs at allocation_rate Hz."""
+        """
+        Main allocation loop - runs at allocation_rate Hz.
+        
+        Iterates all pending tasks, dispatches every task whose
+        dependencies are met to the best available agent.
+        Multiple independent tasks can be dispatched in a single cycle.
+        """
         with self.task_lock:
             pending_tasks = [t for t in self.task_queue if t.status == TaskStatus.PENDING]
         
         if not pending_tasks:
             return
         
-        # Process one task per loop iteration
-        task = pending_tasks[0]
-        
-        # Check dependencies
-        if not self._dependencies_satisfied(task):
-            return
-        
-        # Get availability vector
+        # Get availability vector (updated within the loop as agents get assigned)
         availability = self._get_availability_vector()
         
-        if not any(availability.values()):
-            self.get_logger().debug('No agents available')
-            return
+        dispatched_any = False
         
-        # Calculate Utility Matrix for this task
-        utility_scores = self._calculate_utility_matrix(task, availability)
+        for task in pending_tasks:
+            # Check dependencies
+            if not self._dependencies_satisfied(task):
+                continue
+            
+            # Check if any agent is still available
+            if not any(availability.values()):
+                self.get_logger().debug('No more agents available this cycle')
+                break
+            
+            # Calculate Utility Matrix for this task
+            utility_scores = self._calculate_utility_matrix(task, availability)
+            
+            if not utility_scores:
+                continue
+            
+            # Select best agent (argmax)
+            best_agent = max(utility_scores, key=utility_scores.get)
+            best_score = utility_scores[best_agent]
+            
+            if best_score <= 0:
+                continue
+            
+            self.get_logger().info(
+                f'Allocating {task.task_id} ({task.task_type}) to {best_agent} '
+                f'(score={best_score:.3f})'
+            )
+            
+            # Dispatch task
+            self._dispatch_task(task, best_agent)
+            
+            # Mark agent as unavailable for the rest of this cycle
+            availability[best_agent] = False
+            dispatched_any = True
         
-        if not utility_scores:
-            self.get_logger().warn(f'No compatible agents for task {task.task_id}')
-            return
-        
-        # Select best agent (argmax)
-        best_agent = max(utility_scores, key=utility_scores.get)
-        best_score = utility_scores[best_agent]
-        
-        if best_score <= 0:
-            self.get_logger().warn(f'All utility scores are 0 for task {task.task_id}')
-            return
-        
-        self.get_logger().info(
-            f'Allocating {task.task_id} ({task.task_type}) to {best_agent} '
-            f'(score={best_score:.3f})'
-        )
-        
-        # Dispatch task
-        self._dispatch_task(task, best_agent)
+        if dispatched_any:
+            self._publish_dag_status()
 
     def _dependencies_satisfied(self, task: Task) -> bool:
         """Check if all task dependencies are completed."""
@@ -412,12 +566,45 @@ class CHARSCentralAllocator(Node):
         if agent_pose is None:
             return 10.0  # Default high distance if pose unknown
         
-        target = task.target_pose.pose.position
+        target = self._get_target_position(task)
         dx = target.x - agent_pose.position.x
         dy = target.y - agent_pose.position.y
         dz = target.z - agent_pose.position.z
         
         return math.sqrt(dx*dx + dy*dy + dz*dz)
+
+    def _get_target_position(self, task: Task):
+        """
+        Get the actual target position for a task.
+        
+        For 'pick' tasks, the target_pose carries the object's TF frame name
+        in header.frame_id (e.g. 'aruco_box_0') with dummy position values.
+        This method looks up the real position from TF.
+        
+        For other tasks ('navigate', 'place'), the position in target_pose
+        is already meaningful and is returned directly.
+        """
+        if task.task_type == 'pick':
+            object_frame = task.target_pose.header.frame_id
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    'map', object_frame,
+                    rclpy.time.Time(),
+                    timeout=rclpy.duration.Duration(seconds=0.5)
+                )
+                # Return the real object position from TF
+                pose = Pose()
+                pose.position.x = transform.transform.translation.x
+                pose.position.y = transform.transform.translation.y
+                pose.position.z = transform.transform.translation.z
+                return pose.position
+            except Exception as e:
+                self.get_logger().warn(
+                    f'Failed to look up TF for pick target "{object_frame}": {e}. '
+                    f'Falling back to target_pose values.'
+                )
+        
+        return task.target_pose.pose.position
 
     def _get_path_distance(self, agent: Agent, task: Task) -> float:
         """Get path distance from Nav2 ComputePathToPose service."""
@@ -526,6 +713,7 @@ class CHARSCentralAllocator(Node):
                 f'{result.result.message}'
             )
             self._publish_status(f'COMPLETED: {task.task_id} by {agent_name}')
+            self._publish_dag_status()
             
         elif result.status == GoalStatus.STATUS_CANCELED:
             # Canceled
@@ -553,7 +741,26 @@ class CHARSCentralAllocator(Node):
         agent.current_task = None
         
         self.get_logger().info(f'Triggering global recalculation for {task.task_id}')
+        self._publish_dag_status()
         # The allocation loop will pick up the pending task
+
+    def _publish_dag_status(self):
+        """Publish the current DAG state as JSON on /chars/dag_status."""
+        status_data = {
+            'tasks': [
+                {
+                    'task_id': task.task_id,
+                    'task_type': task.task_type,
+                    'status': task.status.name,
+                    'assigned_agent': task.assigned_agent,
+                    'dependencies': task.dependencies,
+                }
+                for task in self.task_queue
+            ]
+        }
+        msg = String()
+        msg.data = json.dumps(status_data)
+        self.dag_status_pub.publish(msg)
 
     def cancel_task(self, task_id: str):
         """Cancel a task and its assigned agent's goal."""

@@ -203,7 +203,7 @@ def generate_launch_description():
         name='parameter_bridge',
         output='screen',
         parameters=[{
-            'config_file': os.path.join(pkg_share, 'config', 'world_v2_mobman_bridge.yaml')
+            'config_file': os.path.join(pkg_share, 'config', 'world_v2_mobman_swarm3.yaml')
         }]
     )
 
@@ -238,13 +238,14 @@ def generate_launch_description():
             ]
         ),
         # Delay cam2 spawn to avoid race condition with cam1
-        # TimerAction(
-        #     period=6.0,
-        #     actions=[
-        #         robot_state_publisher_node_2,
-        #         spawn_cam_2,
-        #     ]
-        # ),
+        #TimerAction(
+        #    period=6.0,
+        #    actions=[
+        #        robot_state_publisher_node_2,
+        #        spawn_cam_2,
+        #    ]
+        #),
+        # 
         rviz,
         # Delay object_state_manager to ensure Gazebo is ready
         TimerAction(
