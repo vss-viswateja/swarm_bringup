@@ -29,13 +29,13 @@ from rclpy.action import ActionServer, ActionClient, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Pose
+from geometry_msgs.msg import PoseStamped, Pose
 from sensor_msgs.msg import JointState
 
 from swarm_interfaces.action import RobotTask
 from swarm_interfaces.srv import AttachObject, DetachObject, SetBoxState
 from nav2_msgs.action import NavigateToPose
-from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
+from nav2_msgs.srv import GetCostmap
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
     Constraints,
@@ -82,14 +82,14 @@ class MobManTaskActionServer(Node):
         self.declare_parameter('nav_stuck_timeout', 60.0)    # seconds
         self.declare_parameter('nav_max_retries', 3)
         # Place / Pick standoff search parameters
-        self.declare_parameter('pick_radius_min', 0.7)          # inner ring radius (m)
+        self.declare_parameter('pick_radius_min', 0.5)          # inner ring radius (m)
         self.declare_parameter('place_radius_min', 0.5)          # inner ring radius (m)
-        self.declare_parameter('pick_radius_max', 0.85)          # outer ring radius (m)
-        self.declare_parameter('place_radius_max', 0.8)          # outer ring radius (m)
+        self.declare_parameter('pick_radius_max', 0.75)          # outer ring radius (m)
+        self.declare_parameter('place_radius_max', 0.75)          # outer ring radius (m)
         self.declare_parameter('place_angle_step', 30.0)         # angular step in degrees
         self.declare_parameter('place_max_retries', 5)           # max IK-invalid candidates before abort
         self.declare_parameter('pick_max_retries', 5)            # max IK-invalid candidates before abort (pick)
-        self.declare_parameter('costmap_lethal_threshold', 253)  # cost value above which cell is "lethal"
+        self.declare_parameter('costmap_lethal_threshold', 125)  # cost value above which cell is "lethal"
         
         self.robot_namespace = self.get_parameter('robot_namespace').value
         self.planning_group = self.get_parameter('planning_group').value
@@ -137,13 +137,12 @@ class MobManTaskActionServer(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
-        # Subscribe to AMCL pose for base feedback
-        pose_topic = f'/{self.robot_namespace}/amcl_pose'
-        self.pose_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            pose_topic,
-            self._pose_callback,
-            10,
+        # Poll TF for base pose at 10 Hz (replaces AMCL subscriber —
+        # AMCL has tf_broadcast: false so the topic is unreliable;
+        # the map→odom→base_link chain is maintained by the external TF tree)
+        self._pose_timer = self.create_timer(
+            0.1,  # 10 Hz
+            self._update_base_pose_from_tf,
             callback_group=self.action_cb_group
         )
         
@@ -185,14 +184,6 @@ class MobManTaskActionServer(Node):
             callback_group=self.service_cb_group
         )
         
-        # Service client for clearing global costmap (removes ghost obstacles from other agents)
-        clear_costmap_service = f'/{self.robot_namespace}/global_costmap/clear_entirely_global_costmap'
-        self._clear_costmap_client = self.create_client(
-            ClearEntireCostmap,
-            clear_costmap_service,
-            callback_group=self.service_cb_group
-        )
-        
         # Service client for querying global costmap (used in standoff pose search)
         get_costmap_service = f'/{self.robot_namespace}/global_costmap/get_costmap'
         self._get_costmap_client = self.create_client(
@@ -200,14 +191,6 @@ class MobManTaskActionServer(Node):
             get_costmap_service,
             callback_group=self.service_cb_group
         )
-        
-        # Periodic timer to clear global costmap every 5 seconds
-        self._costmap_clear_timer = self.create_timer(
-            10.0,
-            self._clear_global_costmap_callback,
-            callback_group=self.action_cb_group
-        )
-        self.get_logger().info(f'Global costmap clear timer started (every 5s): {clear_costmap_service}')
         
         # Action Server for RobotTask
         task_action_name = f'/{self.robot_namespace}/task_control'
@@ -234,26 +217,31 @@ class MobManTaskActionServer(Node):
         self.get_logger().info(f'  Feedback Rate: {self.feedback_rate} Hz')
         self.get_logger().info('=' * 70)
 
-    def _clear_global_costmap_callback(self):
-        """Periodically clear the global costmap to remove ghost obstacles from other agents."""
-        if not self._clear_costmap_client.service_is_ready():
-            return
-        
-        request = ClearEntireCostmap.Request()
-        future = self._clear_costmap_client.call_async(request)
-        future.add_done_callback(self._costmap_clear_done)
-    
-    def _costmap_clear_done(self, future):
-        """Callback for costmap clear service completion."""
-        try:
-            future.result()
-        except Exception as e:
-            self.get_logger().debug(f'Costmap clear failed: {e}')
+    def _update_base_pose_from_tf(self):
+        """Poll the TF tree at 10 Hz to keep self._current_base_pose up-to-date.
 
-    def _pose_callback(self, msg: PoseWithCovarianceStamped):
-        """Update current base pose from AMCL."""
-        with self._pose_lock:
-            self._current_base_pose = msg.pose.pose
+        Looks up the transform from 'map' to self.base_frame
+        (e.g. 'mobman/base_link') and stores it as a geometry_msgs/Pose.
+        This replaces the AMCL topic subscription because AMCL is configured
+        with tf_broadcast: false.
+        """
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'map',
+                self.base_frame,
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.05)
+            )
+            pose = Pose()
+            pose.position.x = transform.transform.translation.x
+            pose.position.y = transform.transform.translation.y
+            pose.position.z = transform.transform.translation.z
+            pose.orientation = transform.transform.rotation
+            with self._pose_lock:
+                self._current_base_pose = pose
+        except Exception:
+            # TF not yet available — silently skip; pose stays as last known
+            pass
 
     def _get_ee_pose(self) -> Pose:
         """Get current end-effector pose from TF."""
@@ -706,7 +694,49 @@ class MobManTaskActionServer(Node):
             return result
 
         # ----------------------------------------------------------------
-        # Phase 1: Generate standoff candidates (reuse place parameters)
+        # Phase 1: Orient robot toward the object (in-place rotation)
+        # ----------------------------------------------------------------
+        self._current_status = 'Orienting Toward Object'
+        with self._pose_lock:
+            current_base_pose = self._current_base_pose
+
+        if current_base_pose is not None:
+            robot_x = current_base_pose.position.x
+            robot_y = current_base_pose.position.y
+            orient_yaw = math.atan2(obj_map_y - robot_y, obj_map_x - robot_x)
+            orient_qz = math.sin(orient_yaw / 2.0)
+            orient_qw = math.cos(orient_yaw / 2.0)
+
+            orient_goal = PoseStamped()
+            orient_goal.header.frame_id = 'map'
+            orient_goal.header.stamp = self.get_clock().now().to_msg()
+            orient_goal.pose.position.x = robot_x
+            orient_goal.pose.position.y = robot_y
+            orient_goal.pose.position.z = 0.0
+            orient_goal.pose.orientation.x = 0.0
+            orient_goal.pose.orientation.y = 0.0
+            orient_goal.pose.orientation.z = orient_qz
+            orient_goal.pose.orientation.w = orient_qw
+
+            self.get_logger().info(
+                f'[PICK] Orienting toward object at ({obj_map_x:.2f}, {obj_map_y:.2f}), '
+                f'yaw={math.degrees(orient_yaw):.1f}°'
+            )
+            orient_result = await self._execute_navigate(goal_handle, orient_goal, is_subtask=True)
+            if self._cancel_requested:
+                result.success = False
+                result.message = 'Pick task canceled during orientation'
+                goal_handle.canceled()
+                return result
+            if not orient_result.success:
+                self.get_logger().warn(
+                    '[PICK] Orientation navigation failed or was aborted — continuing anyway'
+                )
+        else:
+            self.get_logger().warn('[PICK] No base pose available, skipping orientation step')
+
+        # ----------------------------------------------------------------
+        # Phase 2: Generate standoff candidates
         # ----------------------------------------------------------------
         self._current_status = 'Searching Standoff Poses'
         self.get_logger().info(
@@ -718,7 +748,7 @@ class MobManTaskActionServer(Node):
         self.get_logger().info(f'[PICK] Generated {len(candidates)} raw candidates')
 
         # ----------------------------------------------------------------
-        # Phase 2: Filter by costmap
+        # Phase 3: Filter by costmap
         # ----------------------------------------------------------------
         costmap_msg = await self._get_costmap_snapshot()
 
@@ -744,7 +774,7 @@ class MobManTaskActionServer(Node):
             return result
 
         # ----------------------------------------------------------------
-        # Phase 3: Rank by distance to current robot position
+        # Phase 4: Rank by distance to current robot position
         # ----------------------------------------------------------------
         with self._pose_lock:
             base_pose = self._current_base_pose
@@ -761,7 +791,7 @@ class MobManTaskActionServer(Node):
             )
 
         # ----------------------------------------------------------------
-        # Phase 4: Iterate candidates — navigate → TF re-lookup → IK probe → execute
+        # Phase 5: Iterate candidates — navigate → TF re-lookup → IK probe → execute
         # ----------------------------------------------------------------
         ik_fail_count = 0
         arm_success = False
@@ -1008,29 +1038,51 @@ class MobManTaskActionServer(Node):
             self.get_logger().warn(f'[PLACE] GetCostmap call failed: {e}')
             return None
 
-    def _costmap_cost_at(self, costmap_msg, map_x: float, map_y: float) -> int:
+    def _costmap_cost_at(self, costmap_msg, map_x: float, map_y: float, robot_radius: float = 0.35) -> int:
         """
-        Look up the costmap cost at a given map-frame (x, y) position.
+        Look up the WORST (highest) costmap cost within a circular patch of
+        radius `robot_radius` around (map_x, map_y).
+
+        Checking a single cell is insufficient because a candidate's center cell
+        may sit in a low-cost zone on the outer edge of an inflation gradient,
+        while cells just a few centimetres away (where the robot body would be)
+        are lethal.  Taking the maximum cost over the full footprint patch gives
+        a conservative, correct answer.
+
         Returns cost as integer 0-255, or 255 (lethal) if out of bounds.
         """
         if costmap_msg is None:
             return 0  # Assume free if we have no map
-        
+
         meta = costmap_msg.metadata
         res = meta.resolution
         ox = meta.origin.position.x
         oy = meta.origin.position.y
         width = meta.size_x
         height = meta.size_y
-        
-        cx = int((map_x - ox) / res)
-        cy = int((map_y - oy) / res)
-        
-        if cx < 0 or cy < 0 or cx >= width or cy >= height:
-            return 255  # Out of bounds → treat as lethal
-        
-        idx = cy * width + cx
-        return costmap_msg.data[idx]
+
+        # How many grid cells does the robot radius span?
+        r_cells = int(math.ceil(robot_radius / res))
+
+        center_cx = int((map_x - ox) / res)
+        center_cy = int((map_y - oy) / res)
+
+        max_cost = 0
+        for dy in range(-r_cells, r_cells + 1):
+            for dx in range(-r_cells, r_cells + 1):
+                # Stay within circular footprint
+                if dx * dx + dy * dy > r_cells * r_cells:
+                    continue
+                gx = center_cx + dx
+                gy = center_cy + dy
+                if gx < 0 or gy < 0 or gx >= width or gy >= height:
+                    return 255  # Any out-of-bounds cell → lethal
+                idx = gy * width + gx
+                cost = costmap_msg.data[idx]
+                if cost > max_cost:
+                    max_cost = cost
+
+        return max_cost
 
     def _generate_standoff_candidates(self, target_x: float, target_y: float) -> list:
         """
