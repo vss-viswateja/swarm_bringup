@@ -597,15 +597,15 @@ class ObjectStateManager(Node):
         sdf = f'''<?xml version="1.0"?>
 <sdf version="1.9">
     <model name="box_{aruco_id}">
-        <pose>0 0 0 0 0 0</pose>
+        <pose>0 0 0.1 0 0 0</pose>
         <static>{static_str}</static>
         <link name="link">
             <inertial>
                 <mass>0.5</mass>
                 <inertia>
-                    <ixx>0.003333</ixx>
-                    <iyy>0.005417</iyy>
-                    <izz>0.005417</izz>
+                    <ixx>0.006667</ixx>
+                    <iyy>0.006667</iyy>
+                    <izz>0.006667</izz>
                     <ixy>0</ixy>
                     <ixz>0</ixz>
                     <iyz>0</iyz>
@@ -616,7 +616,7 @@ class ObjectStateManager(Node):
             <collision name="collision">
                 <geometry>
                     <box>
-                        <size>0.3 0.2 0.2</size>
+                        <size>0.2 0.2 0.2</size>
                     </box>
                 </geometry>
                 <surface>
@@ -637,7 +637,7 @@ class ObjectStateManager(Node):
       
             <!-- Visual geometry - Front face with ArUco tag -->
             <visual name="visual_front">
-                <pose>0.15 0 0 0 0 0</pose>
+                <pose>0.1 0 0 0 0 0</pose>
                 <geometry>
                     <box>
                         <size>0.001 0.2 0.2</size>
@@ -657,7 +657,7 @@ class ObjectStateManager(Node):
       
             <!-- Visual geometry - Back face (brick color) -->
             <visual name="visual_back">
-                <pose>-0.15 0 0 0 0 0</pose>
+                <pose>-0.1 0 0 0 0 0</pose>
                 <geometry>
                     <box>
                         <size>0.001 0.2 0.2</size>
@@ -675,7 +675,7 @@ class ObjectStateManager(Node):
                 <pose>0 0.1 0 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.3 0.001 0.2</size>
+                        <size>0.2 0.001 0.2</size>
                     </box>
                 </geometry>
                 <material>
@@ -690,7 +690,7 @@ class ObjectStateManager(Node):
                 <pose>0 -0.1 0 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.3 0.001 0.2</size>
+                        <size>0.2 0.001 0.2</size>
                     </box>
                 </geometry>
                 <material>
@@ -705,7 +705,7 @@ class ObjectStateManager(Node):
                 <pose>0 0 0.1 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.3 0.2 0.001</size>
+                        <size>0.2 0.2 0.001</size>
                     </box>
                 </geometry>
                 <material>
@@ -720,7 +720,7 @@ class ObjectStateManager(Node):
                 <pose>0 0 -0.1 0 0 0</pose>
                 <geometry>
                     <box>
-                        <size>0.3 0.2 0.001</size>
+                        <size>0.2 0.2 0.001</size>
                     </box>
                 </geometry>
                 <material>

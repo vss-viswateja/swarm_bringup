@@ -79,6 +79,7 @@ def generate_launch_description():
         name='mobman_task_action_server',
         output='screen',
         parameters=[{
+            'use_sim_time': True,
             'robot_namespace': LaunchConfiguration('robot_namespace'),
             'planning_group': LaunchConfiguration('planning_group'),
             'end_effector_link': LaunchConfiguration('end_effector_link'),

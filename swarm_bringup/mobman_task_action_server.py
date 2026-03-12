@@ -533,13 +533,16 @@ class MobManTaskActionServer(Node):
             PoseStamped with the frame's pose relative to transform_frame, or None if lookup fails
         """
         try:
-            # Look up the transform from planning frame to target frame
-            # This ensures the returned pose is in the frame MoveIt expects
+            # Look up the transform from planning frame to target frame.
+            # IMPORTANT: use the current clock time (not time=0 / "latest") so that
+            # TF2 resolves ALL segments of the chain at the same moment.
+            # Using rclpy.time.Time() (time=0) allows TF2 to mix a fresh robot pose
+            # with a stale box detection, producing a significant positional error.
             transform = self.tf_buffer.lookup_transform(
-                self.transform_frame,  # Use planning frame (mobman/world) for MoveIt compatibility
+                self.transform_frame,
                 target_frame,
-                rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=2.0)
+                self.get_clock().now(),
+                timeout=rclpy.duration.Duration(seconds=5.0)
             )
             
             # Create PoseStamped from transform
@@ -734,6 +737,18 @@ class MobManTaskActionServer(Node):
                 )
         else:
             self.get_logger().warn('[PICK] No base pose available, skipping orientation step')
+        
+        #wait for one second
+        time.sleep(1.0)
+
+        # ----------------------------------------------------------------
+        # Phase 1b: Move arm to nav config before standoff search
+        # ----------------------------------------------------------------
+        self._current_status = 'Moving Arm to Nav Config'
+        self.get_logger().info('[PICK] Moving arm to nav config before standoff search...')
+        nav_success = await self._move_arm_to_named_position(goal_handle, 'nav')
+        if not nav_success:
+            self.get_logger().warn('[PICK] Failed to move arm to nav config, continuing anyway...')
 
         # ----------------------------------------------------------------
         # Phase 2: Generate standoff candidates
@@ -795,7 +810,7 @@ class MobManTaskActionServer(Node):
         # ----------------------------------------------------------------
         ik_fail_count = 0
         arm_success = False
-        pick_z_offset = 0.11  # 11 cm above box top for approach
+        pick_z_offset = 0.125  # 12.5 cm above box top for approach
 
         for attempt_idx, (cx, cy, cyaw) in enumerate(valid_candidates):
             if self._cancel_requested:
@@ -861,6 +876,8 @@ class MobManTaskActionServer(Node):
                 goal_handle.canceled()
                 return result
 
+            #sleep for one second after navigation
+            time.sleep(1.0)
             # --- Phase 4b: Fresh TF lookup in planning frame after navigation ---
             self._current_status = 'Looking up Object Pose'
             self.get_logger().info(
@@ -937,6 +954,8 @@ class MobManTaskActionServer(Node):
             goal_handle.canceled()
             return result
 
+        # sleep for one second after arm motion
+        time.sleep(1.0)
         # ----------------------------------------------------------------
         # Phase 5: Make box dynamic, then attach
         # ----------------------------------------------------------------
@@ -946,6 +965,9 @@ class MobManTaskActionServer(Node):
         dynamic_success, dynamic_msg = await self._call_set_box_state_service(
             box_name, make_dynamic=True
         )
+
+        #sleep for one second after making box dynamic
+        time.sleep(1.0)
 
         if not dynamic_success:
             self.get_logger().warn(
@@ -983,24 +1005,9 @@ class MobManTaskActionServer(Node):
             return result
 
         # ----------------------------------------------------------------
-        # Phase 6: Return arm to ready, then home
+        # Phase 6: Return arm to home
         # ----------------------------------------------------------------
-        self._current_status = 'Returning to Ready'
-        self.get_logger().info('[PICK] Returning arm to ready position...')
-
-        ready_return_success = await self._move_arm_to_named_position(goal_handle, 'ready')
-
-        if not ready_return_success:
-            self.get_logger().warn(
-                '[PICK] Failed to return arm to ready, attempting home directly...'
-            )
-
-        if self._cancel_requested:
-            result.success = False
-            result.message = 'Pick task canceled during return to ready'
-            goal_handle.canceled()
-            return result
-
+        
         self._current_status = 'Returning to Home'
         self.get_logger().info('[PICK] Returning arm to home position...')
 
@@ -1389,16 +1396,23 @@ class MobManTaskActionServer(Node):
         
         zero_success = await self._move_arm_to_named_position(goal_handle, 'home')
         
+        if not zero_success:
+            self.get_logger().warn('[PLACE] Failed to return arm to home, but place was successful')
+        
+        # Phase 7: Move arm to nav config
+        self._current_status = 'Moving Arm to Nav Config'
+        self.get_logger().info('[PLACE] Moving arm to nav config...')
+        nav_success = await self._move_arm_to_named_position(goal_handle, 'nav')
+        if not nav_success:
+            self.get_logger().warn('[PLACE] Failed to move arm to nav config, continuing anyway...')
+        
         if zero_success:
             result.success = True
-            result.message = f'Place completed and arm returned to home: {detach_msg}'
-            goal_handle.succeed()
+            result.message = f'Place completed, arm returned to home and nav config: {detach_msg}'
         else:
-            self.get_logger().warn('[PLACE] Failed to return arm to home, but place was successful')
             result.success = True
             result.message = f'Place completed but failed to return to home: {detach_msg}'
-            goal_handle.succeed()
-        
+        goal_handle.succeed()
         return result
 
     async def _probe_arm_ik(self, goal_handle, target_pose: PoseStamped) -> bool:
@@ -1613,6 +1627,14 @@ class MobManTaskActionServer(Node):
                 'arm_base_link1_joint': 0.0,
                 'arm_link1_link2p1_joint': 0.0,
                 'arm_link2p3_link3_joint': 1.57,
+                'arm_link3_link4_joint': 1.57,
+                'arm_link4_link5_joint': 0.0,
+                'arm_link5_link6_joint': 0.0,
+            },
+            'nav': {
+                'arm_base_link1_joint': 0.0,
+                'arm_link1_link2p1_joint': 0.0,
+                'arm_link2p3_link3_joint': -1.2,
                 'arm_link3_link4_joint': 1.57,
                 'arm_link4_link5_joint': 0.0,
                 'arm_link5_link6_joint': 0.0,
