@@ -129,7 +129,7 @@ def generate_launch_description():
     )
 
     delayed_moveit = TimerAction(
-        period=40.0,
+        period=55.0,
         actions=[moveit_launch]
     )
 
@@ -147,7 +147,7 @@ def generate_launch_description():
     )
 
     delayed_task_action_server = TimerAction(
-        period=55.0,
+        period=70.0,
         actions=[task_action_server_launch]
     )
 
@@ -168,7 +168,7 @@ def generate_launch_description():
     )
 
     delayed_gripper = TimerAction(
-        period=55.0,
+        period=70.0,
         actions=[gripper_launch]
     )
 
